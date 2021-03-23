@@ -463,6 +463,30 @@ public class ConnectionPoolTest extends VertxTestBase {
     assertFalse(isReentrant.get());
   }
 
+  @Test
+  public void testCancelWaiter() {
+    waitFor(3);
+    EventLoopContext context = vertx.createEventLoopContext();
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    Waiter<Connection> w1 = pool.acquire(context, 1, ar -> fail());
+    Waiter<Connection> w2 = pool.acquire(context, 1, ar -> fail());
+    Waiter<Connection> w3 = pool.acquire(context, 1, ar -> fail());
+    pool.cancel(w1, onSuccess(removed -> {
+      assertFalse(removed);
+      complete();
+    }));
+    pool.cancel(w2, onSuccess(removed -> {
+      assertFalse(removed);
+      complete();
+    }));
+    pool.cancel(w3, onSuccess(removed -> {
+      assertTrue(removed);
+      complete();
+    }));
+    await();
+  }
+
   static class Connection {
     final int capacity;
     public Connection() {

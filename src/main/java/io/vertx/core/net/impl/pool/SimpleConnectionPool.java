@@ -19,10 +19,10 @@ import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
 import io.vertx.core.net.impl.clientconnection.Lease;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.function.Predicate;
 
 public class SimpleConnectionPool<C> implements ConnectionPool<C> {
@@ -54,29 +54,16 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
   }
 
-  static class Waiter<C> {
-
-    final EventLoopContext context;
-    final int weight;
-    final Handler<AsyncResult<Lease<C>>> handler;
-
-    Waiter(EventLoopContext context, final int weight, Handler<AsyncResult<Lease<C>>> handler) {
-      this.context = context;
-      this.weight = weight;
-      this.handler = handler;
-    }
-  }
-
   private final Connector<C> connector;
 
   private final Slot<C>[] slots;
   private int size;
-  private final Deque<Waiter<C>> waiters = new ArrayDeque<>();
   private final int maxWaiters;
   private final int maxWeight;
   private int weight;
   private boolean closed;
   private final Executor<SimpleConnectionPool<C>> sync;
+  private final Waiters<C> waiters = new Waiters<>();
 
   SimpleConnectionPool(Connector<C> connector, int maxSize, int maxWeight) {
     this(connector, maxSize, maxWeight, -1);
@@ -269,16 +256,10 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     execute(new Evict<>(predicate, handler));
   }
 
-  private static class Acquire<C> implements Executor.Action<SimpleConnectionPool<C>> {
-
-    private final EventLoopContext context;
-    private final int weight;
-    private final Handler<AsyncResult<Lease<C>>> handler;
+  private static class Acquire<C> extends Waiter<C> implements Executor.Action<SimpleConnectionPool<C>> {
 
     public Acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-      this.context = context;
-      this.weight = weight;
-      this.handler = handler;
+      super(context, weight, handler);
     }
 
     @Override
@@ -318,7 +299,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
       // 4. Fall in waiters list
       if (pool.maxWaiters == -1 || pool.waiters.size() < pool.maxWaiters) {
-        pool.waiters.add(new Waiter<>(context, weight, handler));
+        pool.waiters.add(this);
         return null;
       } else {
         return () -> context.emit(Future.failedFuture(new ConnectionPoolTooBusyException("Connection pool reached max wait queue size of " + pool.maxWaiters)), handler);
@@ -326,8 +307,38 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
   }
 
-  public void acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-    execute(new Acquire<>(context, weight, handler));
+  public Waiter<C> acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
+    Acquire<C> action = new Acquire<>(context, weight, handler);
+    execute(action);
+    return action;
+  }
+
+  @Override
+  public void cancel(Waiter<C> waiter, Handler<AsyncResult<Boolean>> handler) {
+    execute(new Cancel<>(waiter, handler));
+  }
+
+  private static class Cancel<C> implements Executor.Action<SimpleConnectionPool<C>>, Runnable {
+
+    private final Waiter<C> waiter;
+    private final Handler<AsyncResult<Boolean>> handler;
+    private boolean removed;
+
+    public Cancel(Waiter<C> waiter, Handler<AsyncResult<Boolean>> handler) {
+      this.waiter = waiter;
+      this.handler = handler;
+    }
+
+    @Override
+    public Runnable execute(SimpleConnectionPool<C> state) {
+      removed = state.waiters.remove(waiter);
+      return this;
+    }
+
+    @Override
+    public void run() {
+      handler.handle(Future.succeededFuture(removed));
+    }
   }
 
   static class LeaseImpl<C> implements Lease<C> {
@@ -414,8 +425,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         return () -> handler.handle(Future.failedFuture("Pool already closed"));
       }
       pool.closed = true;
-      b = new ArrayList<>(pool.waiters);
-      pool.waiters.clear();
+      b = pool.waiters.clear();
       list = new ArrayList<>();
       for (int i = 0;i < pool.size;i++) {
         list.add(pool.slots[i].result.future());
@@ -430,5 +440,77 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   @Override
   public void close(Handler<AsyncResult<List<Future<C>>>> handler) {
     execute(new Close<>(handler));
+  }
+
+  private static class Waiters<C> implements Iterable<Waiter<C>> {
+
+    private final Waiter<C> head;
+    private int size;
+
+    public Waiters() {
+      head = new Waiter<>(null, 0, null);
+      head.next = head.prev = head;
+    }
+
+    Waiter<C> poll() {
+      if (head.next == head) {
+        return null;
+      }
+      Waiter<C> node = head.next;
+      remove(node);
+      return node;
+    }
+
+    void add(Waiter<C> node) {
+      node.prev = head.prev;
+      node.next = head;
+      head.prev.next = node;
+      head.prev = node;
+      size++;
+    }
+
+    boolean remove(Waiter<C> node) {
+      if (node.next == null) {
+        return false;
+      }
+      node.next.prev = node.prev;
+      node.prev.next = node.next;
+      size--;
+      return true;
+    }
+
+    List<Waiter<C>> clear() {
+      List<Waiter<C>> lst = new ArrayList<>(size);
+      this.forEach(lst::add);
+      size = 0;
+      head.next = head.prev = head;
+      return lst;
+    }
+
+    int size() {
+      return size;
+    }
+
+    @Override
+    public Iterator<Waiter<C>> iterator() {
+      return new Iterator<Waiter<C>>() {
+        Waiter<C> current = head;
+        @Override
+        public boolean hasNext() {
+          return current.next != head;
+        }
+        @Override
+        public Waiter<C> next() {
+          if (current.next == head) {
+            throw new NoSuchElementException();
+          }
+          try {
+            return current.next;
+          } finally {
+            current = current.next;
+          }
+        }
+      };
+    }
   }
 }

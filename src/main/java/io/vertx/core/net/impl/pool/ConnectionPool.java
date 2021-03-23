@@ -47,7 +47,15 @@ public interface ConnectionPool<C> {
    * @param weight the weight
    * @param handler the callback handler with the result
    */
-  void acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler);
+  Waiter<C> acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler);
+
+  /**
+   * Cancel a waiter.
+   *
+   * @param waiter the waiter to cancel
+   * @param handler the completion handler
+   */
+  void cancel(Waiter<C> waiter, Handler<AsyncResult<Boolean>> handler);
 
   /**
    * <p> Evict connections from the pool with a predicate, only unused connection are evicted.
