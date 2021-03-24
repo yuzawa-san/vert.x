@@ -87,12 +87,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       return size;
   }
 
-  public void connect(Slot<C> slot, Handler<AsyncResult<Lease<C>>> handler) {
+  public void connect(Slot<C> slot, Waiter<C> waiter) {
     connector.connect(slot.context, slot, ar -> {
       if (ar.succeeded()) {
-        execute(new ConnectSuccess<>(slot, ar.result(), handler));
+        execute(new ConnectSuccess<>(slot, ar.result(), waiter));
       } else {
-        execute(new ConnectFailed<>(slot, ar.cause(), handler));
+        execute(new ConnectFailed<>(slot, ar.cause(), waiter));
       }
     });
   }
@@ -101,12 +101,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     private final Slot<C> slot;
     private final ConnectResult<C> result;
-    private final Handler<AsyncResult<Lease<C>>> handler;
+    private Waiter<C> waiter;
 
-    private ConnectSuccess(Slot<C> slot, ConnectResult<C> result, Handler<AsyncResult<Lease<C>>> handler) {
+    private ConnectSuccess(Slot<C> slot, ConnectResult<C> result, Waiter<C> waiter) {
       this.slot = slot;
       this.result = result;
-      this.handler = handler;
+      this.waiter = waiter;
     }
 
     @Override
@@ -118,14 +118,29 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       slot.capacity = slot.maxCapacity;
       pool.weight += (result.weight() - initialWeight);
       if (pool.closed) {
+        if (waiter.done) {
+          waiter = null;
+        } else {
+          waiter.done = true;
+        }
         return () -> {
-          slot.context.emit(Future.failedFuture("Closed"), handler);
+          if (waiter != null) {
+            slot.context.emit(Future.failedFuture("Closed"), waiter.handler);
+          }
           slot.result.complete(slot.connection);
         };
       } else {
         int c = 1;
         LeaseImpl<C>[] extra;
-        int m = Math.min(slot.capacity - 1, pool.waiters.size());
+        int capacity;
+        if (waiter.done) {
+          waiter = null;
+          capacity = slot.capacity;
+        } else {
+          waiter.done = true;
+          capacity = slot.capacity - 1;
+        }
+        int m = Math.min(capacity, pool.waiters.size());
         if (m > 0) {
           c += m;
           extra = new LeaseImpl[m];
@@ -137,7 +152,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         }
         slot.capacity -= c;
         return () -> {
-          new LeaseImpl<>(slot, handler).emit();
+          if (waiter != null) {
+            new LeaseImpl<>(slot, waiter.handler).emit();
+          }
           if (extra != null) {
             for (LeaseImpl<C> lease : extra) {
               lease.emit();
@@ -152,22 +169,29 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   private static class ConnectFailed<C> extends Remove<C> {
 
     private final Throwable cause;
-    private final Handler<AsyncResult<Lease<C>>> handler;
+    private Waiter<C> waiter;
 
-    public ConnectFailed(Slot<C> removed, Throwable cause, Handler<AsyncResult<Lease<C>>> handler) {
+    public ConnectFailed(Slot<C> removed, Throwable cause, Waiter<C> waiter) {
       super(removed);
       this.cause = cause;
-      this.handler = handler;
+      this.waiter = waiter;
     }
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
       Runnable res = super.execute(pool);
+      if (waiter.done) {
+        waiter = null;
+      } else {
+        waiter.done = true;
+      }
       return () -> {
         if (res != null) {
           res.run();
         }
-        removed.context.emit(Future.failedFuture(cause), handler);
+        if (waiter != null) {
+          removed.context.emit(Future.failedFuture(cause), waiter.handler);
+        }
         removed.result.fail(cause);
       };
     }
@@ -194,7 +218,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         pool.weight -= w;
         pool.weight += waiter.weight;
         pool.slots[removed.index] = slot;
-        return () -> pool.connect(slot, waiter.handler);
+        return () -> {
+          if (waiter.listener != null) {
+            waiter.listener.onConnect(waiter);
+          }
+          pool.connect(slot, waiter);
+        };
       } else if (pool.size > 1) {
         Slot<C> tmp = pool.slots[pool.size - 1];
         tmp.index = removed.index;
@@ -258,8 +287,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
   private static class Acquire<C> extends Waiter<C> implements Executor.Action<SimpleConnectionPool<C>> {
 
-    public Acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-      super(context, weight, handler);
+    public Acquire(EventLoopContext context, Waiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler) {
+      super(listener, context, weight, handler);
     }
 
     @Override
@@ -273,7 +302,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         Slot<C> slot = pool.slots[i];
         if (slot != null && slot.context == context && slot.capacity > 0) {
           slot.capacity--;
-          return () -> new LeaseImpl<>(slot, handler).emit();
+          return () -> {
+            new LeaseImpl<>(slot, handler).emit();
+          };
         }
       }
 
@@ -283,7 +314,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         if (pool.size < pool.slots.length) {
           Slot<C> slot = new Slot<>(pool, context, pool.size, weight);
           pool.slots[pool.size++] = slot;
-          return () -> pool.connect(slot, handler);
+          return () -> {
+            if (listener != null) {
+              listener.onConnect(this);
+            }
+            pool.connect(slot, this);
+          };
         } else {
           throw new IllegalStateException();
         }
@@ -293,24 +329,33 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       for (Slot<C> slot : pool.slots) {
         if (slot != null && slot.capacity > 0) {
           slot.capacity--;
-          return () -> new LeaseImpl<>(slot, handler).emit();
+          return () -> {
+            new LeaseImpl<>(slot, handler).emit();
+          };
         }
       }
 
       // 4. Fall in waiters list
       if (pool.maxWaiters == -1 || pool.waiters.size() < pool.maxWaiters) {
         pool.waiters.add(this);
-        return null;
+        return () -> {
+          if (listener != null) {
+            listener.onEnqueue(this);
+          }
+        };
       } else {
         return () -> context.emit(Future.failedFuture(new ConnectionPoolTooBusyException("Connection pool reached max wait queue size of " + pool.maxWaiters)), handler);
       }
     }
   }
 
-  public Waiter<C> acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-    Acquire<C> action = new Acquire<>(context, weight, handler);
-    execute(action);
-    return action;
+  @Override
+  public void acquire(EventLoopContext context, Waiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler) {
+    execute(new Acquire<>(context, listener, weight, handler));
+  }
+
+  public void acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
+    acquire(context, Waiter.NULL_LISTENER, weight, handler);
   }
 
   @Override
@@ -322,7 +367,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     private final Waiter<C> waiter;
     private final Handler<AsyncResult<Boolean>> handler;
-    private boolean removed;
+    private boolean done;
 
     public Cancel(Waiter<C> waiter, Handler<AsyncResult<Boolean>> handler) {
       this.waiter = waiter;
@@ -331,13 +376,20 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> state) {
-      removed = state.waiters.remove(waiter);
+      if (state.waiters.remove(waiter)) {
+        done = true;
+      } else if (!waiter.done) {
+        waiter.done = true;
+        done = true;
+      } else {
+        done = false;
+      }
       return this;
     }
 
     @Override
     public void run() {
-      handler.handle(Future.succeededFuture(removed));
+      handler.handle(Future.succeededFuture(done));
     }
   }
 
@@ -448,7 +500,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     private int size;
 
     public Waiters() {
-      head = new Waiter<>(null, 0, null);
+      head = new Waiter<>(null, null, 0, null);
       head.next = head.prev = head;
     }
 

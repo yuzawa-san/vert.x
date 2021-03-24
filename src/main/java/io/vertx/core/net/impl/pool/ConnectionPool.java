@@ -47,7 +47,16 @@ public interface ConnectionPool<C> {
    * @param weight the weight
    * @param handler the callback handler with the result
    */
-  Waiter<C> acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler);
+  void acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler);
+
+  /**
+   * Acquire a connection from the pool.
+   *
+   * @param context the context
+   * @param weight the weight
+   * @param handler the callback handler with the result
+   */
+  void acquire(EventLoopContext context, Waiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler);
 
   /**
    * Cancel a waiter.

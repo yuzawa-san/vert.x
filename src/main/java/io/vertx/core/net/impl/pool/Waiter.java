@@ -10,13 +10,28 @@ import io.vertx.core.net.impl.clientconnection.Lease;
  */
 public class Waiter<C> {
 
+  static final Listener NULL_LISTENER = new Listener() {
+  };
+
+  public interface Listener<C> {
+
+    default void onEnqueue(Waiter<C> waiter) {
+    }
+
+    default void onConnect(Waiter<C> waiter) {
+    }
+  }
+
+  final Waiter.Listener<C> listener;
   final EventLoopContext context;
   final int weight;
   final Handler<AsyncResult<Lease<C>>> handler;
   Waiter<C> prev;
   Waiter<C> next;
+  boolean done;
 
-  Waiter(EventLoopContext context, final int weight, Handler<AsyncResult<Lease<C>>> handler) {
+  Waiter(Waiter.Listener<C> listener, EventLoopContext context, final int weight, Handler<AsyncResult<Lease<C>>> handler) {
+    this.listener = listener;
     this.context = context;
     this.weight = weight;
     this.handler = handler;

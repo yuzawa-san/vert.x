@@ -103,13 +103,14 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
     });
   }
 
-  private class Request {
+  private class Request implements Waiter.Listener<HttpClientConnection>, Handler<AsyncResult<Lease<HttpClientConnection>>> {
+
     private final EventLoopContext context;
     private final int weight;
     private final long timeout;
     private final Handler<AsyncResult<Lease<HttpClientConnection>>> handler;
     private long timerID;
-    private Waiter<HttpClientConnection> waiter;
+
     Request(EventLoopContext context, int weight, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
       this.context = context;
       this.weight = weight;
@@ -117,28 +118,39 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
       this.handler = handler;
       this.timerID = -1L;
     }
-    synchronized void request() {
-      if (timeout > 0L) {
+
+    @Override
+    public void onEnqueue(Waiter<HttpClientConnection> waiter) {
+      onConnect(waiter);
+    }
+
+    @Override
+    public void onConnect(Waiter<HttpClientConnection> waiter) {
+      if (timeout > 0L && timerID == -1L) {
         timerID = context.setTimer(timeout, id -> {
           pool.cancel(waiter, ar -> {
-            // Ignore
+            if (ar.succeeded()) {
+              if (ar.result()) {
+                handler.handle(Future.failedFuture(new NoStackTraceTimeoutException("The timeout of " + timeout + " ms has been exceeded when getting a connection to " + connector.server())));
+              }
+            } else {
+              // ???
+            }
           });
-          handler.handle(Future.failedFuture(new NoStackTraceTimeoutException("The timeout of " + timeout + " ms has been exceeded when getting a connection to " + connector.server())));
         });
       }
-      waiter = pool.acquire(context, weight, ar -> {
-        boolean cancel = false;
-        synchronized (Request.this) {
-          if (timerID >= 0) {
-            cancel = !context.owner().cancelTimer(timerID);
-          }
-        }
-        if (ar.succeeded() && cancel) {
-          ar.result().recycle();
-        } else {
-          handler.handle(ar);
-        }
-      });
+    }
+
+    @Override
+    public void handle(AsyncResult<Lease<HttpClientConnection>> ar) {
+      if (timerID >= 0) {
+        context.owner().cancelTimer(timerID);
+      }
+      handler.handle(ar);
+    }
+
+    void acquire() {
+      pool.acquire(context, this, weight, this);
     }
   }
 
@@ -146,6 +158,6 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
   public void requestConnection2(ContextInternal ctx, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
     int weight = client.getOptions().getProtocolVersion() == HttpVersion.HTTP_2 ? http1MaxSize : http2MaxSize;
     Request request = new Request((EventLoopContext) ctx, weight, timeout, handler);
-    request.request();
+    request.acquire();
   }
 }

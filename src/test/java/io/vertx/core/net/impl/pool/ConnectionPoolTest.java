@@ -464,25 +464,99 @@ public class ConnectionPoolTest extends VertxTestBase {
   }
 
   @Test
-  public void testCancelWaiter() {
-    waitFor(3);
+  public void testCancelQueuedWaiters() throws Exception {
+    waitFor(1);
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
-    Waiter<Connection> w1 = pool.acquire(context, 1, ar -> fail());
-    Waiter<Connection> w2 = pool.acquire(context, 1, ar -> fail());
-    Waiter<Connection> w3 = pool.acquire(context, 1, ar -> fail());
-    pool.cancel(w1, onSuccess(removed -> {
-      assertFalse(removed);
-      complete();
-    }));
-    pool.cancel(w2, onSuccess(removed -> {
-      assertFalse(removed);
-      complete();
-    }));
-    pool.cancel(w3, onSuccess(removed -> {
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 0, 0);
+    CompletableFuture<Waiter<Connection>> w = new CompletableFuture<>();
+    pool.acquire(context, new Waiter.Listener<Connection>() {
+      @Override
+      public void onEnqueue(Waiter<Connection> waiter) {
+        w.complete(waiter);
+      }
+    }, 1, ar -> fail());
+    w.get(10, TimeUnit.SECONDS);
+    pool.cancel(w.get(10, TimeUnit.SECONDS), onSuccess(removed -> {
       assertTrue(removed);
-      complete();
+      testComplete();
+    }));
+    await();
+  }
+
+  @Test
+  public void testCancelWaiterBeforeConnectionSuccess() throws Exception {
+    testCancelWaiterBeforeConnection(true);
+  }
+
+  @Test
+  public void testCancelWaiterBeforeConnectionFailure() throws Exception {
+    testCancelWaiterBeforeConnection(false);
+  }
+
+  public void testCancelWaiterBeforeConnection(boolean success) throws Exception {
+    waitFor(1);
+    EventLoopContext context = vertx.createEventLoopContext();
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    CompletableFuture<Waiter<Connection>> w = new CompletableFuture<>();
+    pool.acquire(context, new Waiter.Listener<Connection>() {
+      @Override
+      public void onConnect(Waiter<Connection> waiter) {
+        w.complete(waiter);
+      }
+    }, 1, ar -> fail());
+    w.get(10, TimeUnit.SECONDS);
+    ConnectionRequest request = mgr.assertRequest();
+    CountDownLatch latch = new CountDownLatch(1);
+    pool.cancel(w.get(10, TimeUnit.SECONDS), onSuccess(removed -> {
+      assertTrue(removed);
+      latch.countDown();
+    }));
+    awaitLatch(latch);
+    if (success) {
+      request.connect(new Connection(), 1);
+    } else {
+      request.fail(new Throwable());
+    }
+  }
+
+  @Test
+  public void testCancelWaiterAfterConnectionSuccess() throws Exception {
+    testCancelWaiterAfterConnectionSuccess(true);
+  }
+
+  @Test
+  public void testCancelWaiterAfterConnectionFailure() throws Exception {
+    testCancelWaiterAfterConnectionSuccess(false);
+  }
+
+  public void testCancelWaiterAfterConnectionSuccess(boolean success) throws Exception {
+    waitFor(1);
+    EventLoopContext context = vertx.createEventLoopContext();
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    CompletableFuture<Waiter<Connection>> w = new CompletableFuture<>();
+    CountDownLatch latch = new CountDownLatch(1);
+    pool.acquire(context, new Waiter.Listener<Connection>() {
+      @Override
+      public void onConnect(Waiter<Connection> waiter) {
+        w.complete(waiter);
+      }
+    }, 1, ar -> {
+      latch.countDown();
+    });
+    w.get(10, TimeUnit.SECONDS);
+    ConnectionRequest request = mgr.assertRequest();
+    if (success) {
+      request.connect(new Connection(), 1);
+    } else {
+      request.fail(new Throwable());
+    }
+    awaitLatch(latch);
+    pool.cancel(w.get(10, TimeUnit.SECONDS), onSuccess(removed -> {
+      assertFalse(removed);
+      testComplete();
     }));
     await();
   }
