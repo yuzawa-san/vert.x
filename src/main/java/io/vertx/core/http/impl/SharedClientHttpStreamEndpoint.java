@@ -22,6 +22,7 @@ import io.vertx.core.net.impl.pool.ConnectionEventListener;
 import io.vertx.core.net.impl.pool.ConnectionPool;
 import io.vertx.core.net.impl.pool.Connector;
 import io.vertx.core.net.impl.clientconnection.Lease;
+import io.vertx.core.net.impl.pool.Waiter;
 import io.vertx.core.spi.metrics.ClientMetrics;
 
 import java.util.List;
@@ -102,9 +103,49 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
     });
   }
 
+  private class Request {
+    private final EventLoopContext context;
+    private final int weight;
+    private final long timeout;
+    private final Handler<AsyncResult<Lease<HttpClientConnection>>> handler;
+    private long timerID;
+    private Waiter<HttpClientConnection> waiter;
+    Request(EventLoopContext context, int weight, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
+      this.context = context;
+      this.weight = weight;
+      this.timeout = timeout;
+      this.handler = handler;
+      this.timerID = -1L;
+    }
+    synchronized void request() {
+      if (timeout > 0L) {
+        timerID = context.setTimer(timeout, id -> {
+          pool.cancel(waiter, ar -> {
+            // Ignore
+          });
+          handler.handle(Future.failedFuture(new NoStackTraceTimeoutException("The timeout of " + timeout + " ms has been exceeded when getting a connection to " + connector.server())));
+        });
+      }
+      waiter = pool.acquire(context, weight, ar -> {
+        boolean cancel = false;
+        synchronized (Request.this) {
+          if (timerID >= 0) {
+            cancel = !context.owner().cancelTimer(timerID);
+          }
+        }
+        if (ar.succeeded() && cancel) {
+          ar.result().recycle();
+        } else {
+          handler.handle(ar);
+        }
+      });
+    }
+  }
+
   @Override
-  public void requestConnection2(ContextInternal ctx, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
+  public void requestConnection2(ContextInternal ctx, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
     int weight = client.getOptions().getProtocolVersion() == HttpVersion.HTTP_2 ? http1MaxSize : http2MaxSize;
-    pool.acquire((EventLoopContext) ctx, weight, handler);
+    Request request = new Request((EventLoopContext) ctx, weight, timeout, handler);
+    request.request();
   }
 }

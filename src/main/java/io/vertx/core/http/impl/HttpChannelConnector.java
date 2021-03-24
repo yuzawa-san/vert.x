@@ -75,6 +75,10 @@ public class HttpChannelConnector {
     this.server = server;
   }
 
+  public SocketAddress server() {
+    return server;
+  }
+
   private void connect(EventLoopContext context, Promise<NetSocket> promise) {
     ProxyOptions proxyOptions = this.options.getProxyOptions();
     if (proxyOptions != null && sslHelper == null && proxyOptions.getType()== ProxyType.HTTP) {

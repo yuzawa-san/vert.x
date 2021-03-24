@@ -88,7 +88,7 @@ class WebSocketEndpoint extends ClientHttpEndpointBase<HttpClientConnection> {
   }
 
   @Override
-  public void requestConnection2(ContextInternal ctx, Handler<AsyncResult<HttpClientConnection>> handler) {
+  public void requestConnection2(ContextInternal ctx, long timeout, Handler<AsyncResult<HttpClientConnection>> handler) {
     synchronized (this) {
       if (inflightConnections >= maxPoolSize) {
         waiters.add(new Waiter(handler, ctx));

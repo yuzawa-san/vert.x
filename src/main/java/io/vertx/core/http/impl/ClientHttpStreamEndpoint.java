@@ -54,7 +54,7 @@ class ClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpClientCo
   }
 
   @Override
-  public void requestConnection2(ContextInternal ctx, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
+  public void requestConnection2(ContextInternal ctx, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
     pool.getConnection(handler);
   }
 }

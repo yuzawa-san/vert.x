@@ -36,7 +36,7 @@ abstract class ClientHttpEndpointBase<C> extends Endpoint<C> {
   }
 
   @Override
-  public final void requestConnection(ContextInternal ctx, Handler<AsyncResult<C>> handler) {
+  public final void requestConnection(ContextInternal ctx, long timeout, Handler<AsyncResult<C>> handler) {
     if (metrics != null) {
       Object metric;
       if (metrics != null) {
@@ -52,10 +52,10 @@ abstract class ClientHttpEndpointBase<C> extends Endpoint<C> {
         next.handle(ar);
       };
     }
-    requestConnection2(ctx, handler);
+    requestConnection2(ctx, timeout, handler);
   }
 
-  protected abstract void requestConnection2(ContextInternal ctx, Handler<AsyncResult<C>> handler);
+  protected abstract void requestConnection2(ContextInternal ctx, long timeout, Handler<AsyncResult<C>> handler);
 
   abstract void checkExpired();
 

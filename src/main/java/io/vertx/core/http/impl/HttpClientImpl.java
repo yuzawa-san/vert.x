@@ -617,21 +617,13 @@ public class HttpClientImpl implements HttpClient, MetricsProvider, Closeable {
     PromiseInternal<HttpClientRequest> requestPromise) {
     ContextInternal ctx = requestPromise.context();
     EndpointKey key = new EndpointKey(useSSL, server, peerAddress);
-    long timerID;
-    if (timeout > 0L) {
-      timerID = ctx.setTimer(timeout, id -> {
-        requestPromise.tryFail(HttpClientRequestBase.timeoutEx(timeout, method, server, requestURI));
-      });
-    } else {
-      timerID = -1L;
-    }
     EventLoopContext eventLoopContext;
     if (ctx instanceof EventLoopContext) {
       eventLoopContext = (EventLoopContext) ctx;
     } else {
       eventLoopContext = (EventLoopContext) vertx.createEventLoopContext(ctx.nettyEventLoop(), ctx.workerPool(), ctx.classLoader());
     }
-    httpCM.getConnection(eventLoopContext, key, ar1 -> {
+    httpCM.getConnection(eventLoopContext, key, timeout, ar1 -> {
       if (ar1.succeeded()) {
         Lease<HttpClientConnection> lease = ar1.result();
         HttpClientConnection conn = lease.get();
@@ -648,11 +640,8 @@ public class HttpClientImpl implements HttpClient, MetricsProvider, Closeable {
             if (followRedirects != null) {
               req.setFollowRedirects(followRedirects);
             }
-            if (timerID >= 0L) {
-              if (!vertx.cancelTimer(timerID)) {
-                req.reset(0);
-                return;
-              }
+            if (timeout > 0L) {
+              // Maybe later ?
               req.setTimeout(timeout);
             }
             requestPromise.complete(req);
