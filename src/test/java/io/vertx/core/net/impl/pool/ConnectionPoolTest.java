@@ -97,7 +97,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     request1.connect(expected1, 1);
     CountDownLatch latch = new CountDownLatch(1);
     promise.future().onComplete(onSuccess(lease -> {
-      request1.listener.remove();
+      request1.listener.onRemove();
       lease.recycle();
       latch.countDown();
     }));
@@ -191,7 +191,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     ConnectionRequest request = mgr.assertRequest();
     request.connect(conn, 1);
     latch.get(10, TimeUnit.SECONDS);
-    request.listener.remove();
+    request.listener.onRemove();
     assertEquals(0, pool.size());
     assertEquals(0, pool.weight());
   }
@@ -212,7 +212,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     ConnectionRequest request2 = mgr.assertRequest();
     request2.connect(conn2, 1);
     latch1.get(10, TimeUnit.SECONDS);
-    request1.listener.remove();
+    request1.listener.onRemove();
     assertEquals(1, pool.size());
     assertEquals(1, pool.weight());
   }
@@ -240,7 +240,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     }));
     assertEquals(1, pool.waiters());
     evicted.set(true);
-    request1.listener.remove();
+    request1.listener.onRemove();
     ConnectionRequest request2 = mgr.assertRequest();
     request2.connect(conn2, 1);
     await();
@@ -361,7 +361,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     ConnectionRequest request = mgr.assertRequest();
     request.connect(expected, 1);
     Lease<Connection> lease = latch.get();
-    request.listener.remove();
+    request.listener.onRemove();
     assertEquals(0, pool.size());
     lease.recycle();
     assertEquals(0, pool.size());
@@ -469,10 +469,10 @@ public class ConnectionPoolTest extends VertxTestBase {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
     ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 0, 0);
-    CompletableFuture<Waiter<Connection>> w = new CompletableFuture<>();
-    pool.acquire(context, new Waiter.Listener<Connection>() {
+    CompletableFuture<PoolWaiter<Connection>> w = new CompletableFuture<>();
+    pool.acquire(context, new PoolWaiter.Listener<Connection>() {
       @Override
-      public void onEnqueue(Waiter<Connection> waiter) {
+      public void onEnqueue(PoolWaiter<Connection> waiter) {
         w.complete(waiter);
       }
     }, 1, ar -> fail());
@@ -499,10 +499,10 @@ public class ConnectionPoolTest extends VertxTestBase {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
     ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
-    CompletableFuture<Waiter<Connection>> w = new CompletableFuture<>();
-    pool.acquire(context, new Waiter.Listener<Connection>() {
+    CompletableFuture<PoolWaiter<Connection>> w = new CompletableFuture<>();
+    pool.acquire(context, new PoolWaiter.Listener<Connection>() {
       @Override
-      public void onConnect(Waiter<Connection> waiter) {
+      public void onConnect(PoolWaiter<Connection> waiter) {
         w.complete(waiter);
       }
     }, 1, ar -> fail());
@@ -536,11 +536,11 @@ public class ConnectionPoolTest extends VertxTestBase {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
     ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
-    CompletableFuture<Waiter<Connection>> w = new CompletableFuture<>();
+    CompletableFuture<PoolWaiter<Connection>> w = new CompletableFuture<>();
     CountDownLatch latch = new CountDownLatch(1);
-    pool.acquire(context, new Waiter.Listener<Connection>() {
+    pool.acquire(context, new PoolWaiter.Listener<Connection>() {
       @Override
-      public void onConnect(Waiter<Connection> waiter) {
+      public void onConnect(PoolWaiter<Connection> waiter) {
         w.complete(waiter);
       }
     }, 1, ar -> {
@@ -573,9 +573,9 @@ public class ConnectionPoolTest extends VertxTestBase {
 
   static class ConnectionRequest {
     final EventLoopContext context;
-    final ConnectionEventListener listener;
+    final PoolConnector.Listener listener;
     final Handler<AsyncResult<ConnectResult<Connection>>> handler;
-    ConnectionRequest(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<Connection>>> handler) {
+    ConnectionRequest(EventLoopContext context, PoolConnector.Listener listener, Handler<AsyncResult<ConnectResult<Connection>>> handler) {
       this.context = context;
       this.listener = listener;
       this.handler = handler;
@@ -589,12 +589,12 @@ public class ConnectionPoolTest extends VertxTestBase {
     }
   }
 
-  class ConnectionManager implements Connector<Connection> {
+  class ConnectionManager implements PoolConnector<Connection> {
 
     private final Queue<ConnectionRequest> requests = new ArrayBlockingQueue<>(100);
 
     @Override
-    public void connect(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<Connection>>> handler) {
+    public void connect(EventLoopContext context, Listener listener, Handler<AsyncResult<ConnectResult<Connection>>> handler) {
       requests.add(new ConnectionRequest(context, listener, handler));
     }
 

@@ -20,7 +20,7 @@ import io.vertx.core.net.impl.clientconnection.ConnectResult;
  *
  * @param <C>
  */
-public interface Connector<C> {
+public interface PoolConnector<C> {
 
   /**
    * Connects to a back-end.
@@ -29,7 +29,7 @@ public interface Connector<C> {
    * @param listener the listener
    * @param handler the callback handler with the result
    */
-  void connect(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<C>>> handler);
+  void connect(EventLoopContext context, Listener listener, Handler<AsyncResult<ConnectResult<C>>> handler);
 
   /**
    * Checks whether the connection is still valid.
@@ -42,4 +42,17 @@ public interface Connector<C> {
    */
   boolean isValid(C connection);
 
+  /**
+   * The contract by which the back-end can signal the pool of connection events.
+   *
+   * <p> A connection listener is used for each connection in the pool.
+   */
+  interface Listener {
+
+    /**
+     * Signal the connection needs to be remove from the pool.
+     */
+    void onRemove();
+
+  }
 }

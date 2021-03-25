@@ -18,11 +18,10 @@ import io.vertx.core.http.HttpVersion;
 import io.vertx.core.impl.ContextInternal;
 import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
-import io.vertx.core.net.impl.pool.ConnectionEventListener;
 import io.vertx.core.net.impl.pool.ConnectionPool;
-import io.vertx.core.net.impl.pool.Connector;
+import io.vertx.core.net.impl.pool.PoolConnector;
 import io.vertx.core.net.impl.clientconnection.Lease;
-import io.vertx.core.net.impl.pool.Waiter;
+import io.vertx.core.net.impl.pool.PoolWaiter;
 import io.vertx.core.spi.metrics.ClientMetrics;
 
 import java.util.List;
@@ -30,7 +29,7 @@ import java.util.List;
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
  */
-class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpClientConnection>> implements Connector<HttpClientConnection> {
+class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpClientConnection>> implements PoolConnector<HttpClientConnection> {
 
   private final HttpClientImpl client;
   private final HttpChannelConnector connector;
@@ -57,7 +56,7 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
   }
 
   @Override
-  public void connect(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<HttpClientConnection>>> handler) {
+  public void connect(EventLoopContext context, Listener listener, Handler<AsyncResult<ConnectResult<HttpClientConnection>>> handler) {
     connector
       .httpConnect(context)
       .onComplete(ar -> {
@@ -66,7 +65,7 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
           HttpClientConnection connection = ar.result();
           connection.evictionHandler(v -> {
             decRefCount();
-            listener.remove();
+            listener.onRemove();
           });
           connection.concurrencyChangeHandler(concurrency -> {
             // TODO
@@ -103,7 +102,7 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
     });
   }
 
-  private class Request implements Waiter.Listener<HttpClientConnection>, Handler<AsyncResult<Lease<HttpClientConnection>>> {
+  private class Request implements PoolWaiter.Listener<HttpClientConnection>, Handler<AsyncResult<Lease<HttpClientConnection>>> {
 
     private final EventLoopContext context;
     private final int weight;
@@ -120,12 +119,12 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
     }
 
     @Override
-    public void onEnqueue(Waiter<HttpClientConnection> waiter) {
+    public void onEnqueue(PoolWaiter<HttpClientConnection> waiter) {
       onConnect(waiter);
     }
 
     @Override
-    public void onConnect(Waiter<HttpClientConnection> waiter) {
+    public void onConnect(PoolWaiter<HttpClientConnection> waiter) {
       if (timeout > 0L && timerID == -1L) {
         timerID = context.setTimer(timeout, id -> {
           pool.cancel(waiter, ar -> {

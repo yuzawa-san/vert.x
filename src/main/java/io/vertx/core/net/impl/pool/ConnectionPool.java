@@ -13,18 +13,10 @@ package io.vertx.core.net.impl.pool;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.Promise;
-import io.vertx.core.http.ConnectionPoolTooBusyException;
 import io.vertx.core.impl.EventLoopContext;
-import io.vertx.core.net.impl.clientconnection.ConnectResult;
 import io.vertx.core.net.impl.clientconnection.Lease;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
 
 /**
@@ -32,11 +24,11 @@ import java.util.function.Predicate;
  */
 public interface ConnectionPool<C> {
 
-  static <C> ConnectionPool<C> pool(Connector<C> connector, int maxSize, int maxWeight) {
+  static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int maxSize, int maxWeight) {
     return new SimpleConnectionPool<>(connector, maxSize, maxWeight);
   }
 
-  static <C> ConnectionPool<C> pool(Connector<C> connector, int maxSize, int maxWeight, int maxWaiters) {
+  static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int maxSize, int maxWeight, int maxWaiters) {
     return new SimpleConnectionPool<>(connector, maxSize, maxWeight, maxWaiters);
   }
 
@@ -53,10 +45,11 @@ public interface ConnectionPool<C> {
    * Acquire a connection from the pool.
    *
    * @param context the context
+   * @param listener the waiter event listener
    * @param weight the weight
    * @param handler the callback handler with the result
    */
-  void acquire(EventLoopContext context, Waiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler);
+  void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler);
 
   /**
    * Cancel a waiter.
@@ -64,7 +57,7 @@ public interface ConnectionPool<C> {
    * @param waiter the waiter to cancel
    * @param handler the completion handler
    */
-  void cancel(Waiter<C> waiter, Handler<AsyncResult<Boolean>> handler);
+  void cancel(PoolWaiter<C> waiter, Handler<AsyncResult<Boolean>> handler);
 
   /**
    * <p> Evict connections from the pool with a predicate, only unused connection are evicted.
