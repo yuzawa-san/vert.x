@@ -300,7 +300,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       // 1. Try reuse a existing connection with the same context
       for (int i = 0;i < pool.size;i++) {
         Slot<C> slot = pool.slots[i];
-        if (slot != null && slot.context == context && slot.capacity > 0) {
+        if (slot.context == context && slot.capacity > 0) {
           slot.capacity--;
           return () -> {
             new LeaseImpl<>(slot, handler).emit();
@@ -326,8 +326,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       }
 
       // 3. Try use another context
-      for (Slot<C> slot : pool.slots) {
-        if (slot != null && slot.capacity > 0) {
+      for (int i = 0;i < pool.size;i++) {
+        Slot<C> slot = pool.slots[i];
+        if (slot.capacity > 0) {
           slot.capacity--;
           return () -> {
             new LeaseImpl<>(slot, handler).emit();
