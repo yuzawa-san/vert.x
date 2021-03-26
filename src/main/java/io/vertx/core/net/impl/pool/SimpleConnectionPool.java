@@ -11,6 +11,7 @@
 package io.vertx.core.net.impl.pool;
 
 import io.vertx.core.AsyncResult;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
@@ -19,15 +20,39 @@ import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
 import io.vertx.core.net.impl.clientconnection.Lease;
 
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
 public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
-  static class Slot<C> implements PoolConnector.Listener {
+  private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> strategy1 = (waiter, list) -> {
+    int size = list.size();
+    for (int i = 0;i < size;i++) {
+      PoolConnection slot = list.get(i);
+      if (slot.context() == waiter.context() && slot.capacity() > 0) {
+        return slot;
+      }
+    }
+    return null;
+  };
+
+  private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> strategy2 = (waiter, list) -> {
+    int size = list.size();
+    for (int i = 0;i < size;i++) {
+      PoolConnection slot = list.get(i);
+      if (slot.capacity() > 0) {
+        return slot;
+      }
+    }
+    return null;
+  };
+
+  static class Slot<C> implements PoolConnector.Listener, PoolConnection<C> {
 
     private final SimpleConnectionPool<C> pool;
     private final EventLoopContext context;
@@ -52,6 +77,26 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     public void onRemove() {
       pool.remove(this);
     }
+
+    @Override
+    public Context context() {
+      return context;
+    }
+
+    @Override
+    public C get() {
+      return connection;
+    }
+
+    @Override
+    public int capacity() {
+      return capacity;
+    }
+
+    @Override
+    public int maxCapacity() {
+      return maxCapacity;
+    }
   }
 
   private final PoolConnector<C> connector;
@@ -64,6 +109,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   private boolean closed;
   private final Executor<SimpleConnectionPool<C>> sync;
   private final Waiters<C> waiters = new Waiters<>();
+  private final ListImpl list = new ListImpl();
+  private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> DEFAULT_SELECTOR;
+  private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> FIRST_AVAILABLE_SELECTOR;
 
   SimpleConnectionPool(PoolConnector<C> connector, int maxSize, int maxWeight) {
     this(connector, maxSize, maxWeight, -1);
@@ -77,6 +125,14 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     this.weight = 0;
     this.maxWeight = maxWeight;
     this.sync = new CombinerExecutor2<>(this);
+    this.DEFAULT_SELECTOR = (BiFunction) strategy1;
+    this.FIRST_AVAILABLE_SELECTOR = (BiFunction) strategy2;
+  }
+
+  @Override
+  public ConnectionPool<C> connectionSelector(BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> selector) {
+    this.DEFAULT_SELECTOR = selector;
+    return this;
   }
 
   private void execute(Executor.Action<SimpleConnectionPool<C>> action) {
@@ -298,27 +354,25 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       }
 
       // 1. Try reuse a existing connection with the same context
-      for (int i = 0;i < pool.size;i++) {
-        Slot<C> slot = pool.slots[i];
-        if (slot.context == context && slot.capacity > 0) {
-          slot.capacity--;
-          return () -> {
-            new LeaseImpl<>(slot, handler).emit();
-          };
-        }
+      Slot<C> slot1 = (Slot<C>) pool.DEFAULT_SELECTOR.apply(this, pool.list);
+      if (slot1 != null) {
+        slot1.capacity--;
+        return () -> {
+          new LeaseImpl<>(slot1, handler).emit();
+        };
       }
 
       // 2. Try create connection
       if (pool.weight < pool.maxWeight) {
         pool.weight += weight;
         if (pool.size < pool.slots.length) {
-          Slot<C> slot = new Slot<>(pool, context, pool.size, weight);
-          pool.slots[pool.size++] = slot;
+          Slot<C> slot2 = new Slot<>(pool, context, pool.size, weight);
+          pool.slots[pool.size++] = slot2;
           return () -> {
             if (listener != null) {
               listener.onConnect(this);
             }
-            pool.connect(slot, this);
+            pool.connect(slot2, this);
           };
         } else {
           throw new IllegalStateException();
@@ -326,14 +380,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       }
 
       // 3. Try use another context
-      for (int i = 0;i < pool.size;i++) {
-        Slot<C> slot = pool.slots[i];
-        if (slot.capacity > 0) {
-          slot.capacity--;
-          return () -> {
-            new LeaseImpl<>(slot, handler).emit();
-          };
-        }
+      Slot<C> slot3 = (Slot<C>) pool.FIRST_AVAILABLE_SELECTOR.apply(this, pool.list);
+      if (slot3 != null) {
+        slot3.capacity--;
+        return () -> {
+          new LeaseImpl<>(slot3, handler).emit();
+        };
       }
 
       // 4. Fall in waiters list
@@ -564,6 +616,17 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
           }
         }
       };
+    }
+  }
+
+  class ListImpl extends AbstractList<PoolConnection<C>> {
+    @Override
+    public PoolConnection<C> get(int index) {
+      return slots[index];
+    }
+    @Override
+    public int size() {
+      return size;
     }
   }
 }

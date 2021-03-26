@@ -561,6 +561,36 @@ public class ConnectionPoolTest extends VertxTestBase {
     await();
   }
 
+  @Test
+  public void testConnectionSelector() throws Exception {
+    waitFor(1);
+    EventLoopContext context = vertx.createEventLoopContext();
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    CountDownLatch latch1 = new CountDownLatch(1);
+    pool.acquire(context, 1, onSuccess(lease -> {
+      lease.recycle();
+      latch1.countDown();
+    }));
+    Connection conn1 = new Connection();
+    mgr.assertRequest().connect(conn1, 1);
+    awaitLatch(latch1);
+    pool.connectionSelector((waiter, list) -> {
+      assertEquals(1, list.size());
+      PoolConnection<Connection> pooled = list.get(0);
+      assertEquals(1, pooled.capacity());
+      assertEquals(1, pooled.maxCapacity());
+      assertSame(conn1, pooled.get());
+      assertSame(context, pooled.context());
+      assertSame(context, waiter.context());
+      return pooled;
+    });
+    pool.acquire(context, 1, onSuccess(lease -> {
+      testComplete();
+    }));
+    await();
+  }
+
   static class Connection {
     final int capacity;
     public Connection() {

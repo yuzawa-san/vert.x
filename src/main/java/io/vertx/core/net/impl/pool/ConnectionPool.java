@@ -17,6 +17,7 @@ import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.Lease;
 
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
 /**
@@ -31,6 +32,14 @@ public interface ConnectionPool<C> {
   static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int maxSize, int maxWeight, int maxWaiters) {
     return new SimpleConnectionPool<>(connector, maxSize, maxWeight, maxWaiters);
   }
+
+  /**
+   * Set a selector function that decides the best connection to use.
+   *
+   * @param selector the selector function
+   * @return a reference to this, so the API can be used fluently
+   */
+  ConnectionPool<C> connectionSelector(BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> selector);
 
   /**
    * Acquire a connection from the pool.
