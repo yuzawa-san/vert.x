@@ -431,10 +431,10 @@ public class ConnectionPoolTest extends VertxTestBase {
     pool.acquire(ctx, 1, onSuccess(lease -> {
 
     }));
-    pool.acquire(ctx, 1, ar -> {
-
-    });
-    waitFor(2);
+    waitFor(3);
+    pool.acquire(ctx, 1, onFailure(err -> {
+      complete();
+    }));
     pool.acquire(ctx, 1, onFailure(err -> {
       complete();
     }));
@@ -444,6 +444,7 @@ public class ConnectionPoolTest extends VertxTestBase {
       assertEquals(2, lst.size());
       complete();
     }));
+    await();
   }
 
   @Test
@@ -461,6 +462,41 @@ public class ConnectionPoolTest extends VertxTestBase {
     }));
     awaitLatch(latch);
     assertFalse(isReentrant.get());
+  }
+
+  @Test
+  public void testUseAfterClose() throws Exception {
+    waitFor(3);
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    EventLoopContext ctx = vertx.createEventLoopContext();
+    CompletableFuture<PoolWaiter<Connection>> waiterFut = new CompletableFuture<>();
+    pool.acquire(ctx, new PoolWaiter.Listener<Connection>() {
+      @Override
+      public void onConnect(PoolWaiter<Connection> waiter) {
+        waiterFut.complete(waiter);
+      }
+    }, 1, ar -> {
+      // Failed
+    });
+    PoolWaiter<Connection> waiter = waiterFut.get(20, TimeUnit.SECONDS);
+    ConnectionRequest request = mgr.assertRequest();
+    CountDownLatch latch = new CountDownLatch(1);
+    pool.close(onSuccess(lst -> {
+      latch.countDown();
+    }));
+    awaitLatch(latch);
+    pool.evict(c -> true, onFailure(err -> {
+      complete();
+    }));
+    pool.acquire(ctx, 1, onFailure(err -> {
+      complete();
+    }));
+    pool.cancel(waiter, onFailure(err -> {
+      complete();
+    }));
+    request.connect(new Connection(), 1);
+    await();
   }
 
   @Test

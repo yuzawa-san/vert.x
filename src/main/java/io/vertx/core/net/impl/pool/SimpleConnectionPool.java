@@ -30,6 +30,8 @@ import java.util.function.Predicate;
 
 public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
+  private static final Future POOL_CLOSED = Future.failedFuture("Pool closed");
+
   private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> strategy1 = (waiter, list) -> {
     int size = list.size();
     for (int i = 0;i < size;i++) {
@@ -57,6 +59,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     private final SimpleConnectionPool<C> pool;
     private final EventLoopContext context;
     private final Promise<C> result;
+    private PoolWaiter<C> initiator;
     private C connection;
     private int index;
     private int capacity;
@@ -144,7 +147,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   }
 
   public void connect(Slot<C> slot, PoolWaiter<C> waiter) {
+    slot.initiator = waiter;
     connector.connect(slot.context, slot, ar -> {
+      slot.initiator = null;
       if (ar.succeeded()) {
         execute(new ConnectSuccess<>(slot, ar.result(), waiter));
       } else {
@@ -181,7 +186,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         }
         return () -> {
           if (waiter != null) {
-            slot.context.emit(Future.failedFuture("Closed"), waiter.handler);
+            slot.context.emit(POOL_CLOSED, waiter.handler);
           }
           slot.result.complete(slot.connection);
         };
@@ -235,12 +240,15 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
-      Runnable res = super.execute(pool);
       if (waiter.done) {
         waiter = null;
       } else {
         waiter.done = true;
       }
+      if (pool.closed) {
+        return () -> waiter.handler.handle(POOL_CLOSED);
+      }
+      Runnable res = super.execute(pool);
       return () -> {
         if (res != null) {
           res.run();
@@ -263,6 +271,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
+      if (pool.closed) {
+        return null;
+      }
       int w = removed.weight;
       removed.capacity = 0;
       removed.maxCapacity = 0;
@@ -313,6 +324,9 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
+      if (pool.closed) {
+        return () -> handler.handle(POOL_CLOSED);
+      }
       List<C> lst = new ArrayList<>();
       for (int i = pool.size - 1;i >= 0;i--) {
         Slot<C> slot = pool.slots[i];
@@ -350,7 +364,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
       if (pool.closed) {
-        return () -> context.emit(Future.failedFuture("Closed"), handler);
+        return () -> context.emit(POOL_CLOSED, handler);
       }
 
       // 1. Try reuse a existing connection with the same context
@@ -428,8 +442,11 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
 
     @Override
-    public Runnable execute(SimpleConnectionPool<C> state) {
-      if (state.waiters.remove(waiter)) {
+    public Runnable execute(SimpleConnectionPool<C> pool) {
+      if (pool.closed) {
+        return () -> handler.handle(POOL_CLOSED);
+      }
+      if (pool.waiters.remove(waiter)) {
         done = true;
       } else if (!waiter.done) {
         waiter.done = true;
@@ -484,17 +501,15 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
-      if (slot.connection != null) {
+      if (!pool.closed && slot.connection != null) {
         if (pool.waiters.size() > 0) {
           PoolWaiter<C> waiter = pool.waiters.poll();
           return () -> new LeaseImpl<>(slot, waiter.handler).emit();
         } else {
           slot.capacity++;
-          return null;
         }
-      } else {
-        return null;
       }
+      return null;
     }
   }
 
@@ -524,19 +539,22 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
-      List<Future<C>> list;
-      List<PoolWaiter<C>> b;
       if (pool.closed) {
-        return () -> handler.handle(Future.failedFuture("Pool already closed"));
+        return () -> handler.handle(POOL_CLOSED);
       }
       pool.closed = true;
-      b = pool.waiters.clear();
-      list = new ArrayList<>();
+      List<PoolWaiter<C>> waiters = pool.waiters.clear();
+      List<Future<C>> list = new ArrayList<>();
       for (int i = 0;i < pool.size;i++) {
-        list.add(pool.slots[i].result.future());
+        Slot<C> slot = pool.slots[i];
+        if (slot.initiator != null) {
+          waiters.add(slot.initiator);
+          slot.initiator = null;
+        }
+        list.add(slot.result.future());
       }
       return () -> {
-        b.forEach(w -> w.context.emit(Future.failedFuture("Closed"), w.handler));
+        waiters.forEach(w -> w.context.emit(POOL_CLOSED, w.handler));
         handler.handle(Future.succeededFuture(list));
       };
     }
