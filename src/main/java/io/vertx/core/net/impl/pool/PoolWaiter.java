@@ -25,7 +25,7 @@ public class PoolWaiter<C> {
   };
 
   /**
-   * An interface notifying the connection borrower of the lifecycle of a waiter.
+   * An interface notifying the connection borrower of the waiter lifecycle.
    */
   public interface Listener<C> {
 
@@ -52,7 +52,7 @@ public class PoolWaiter<C> {
   final Handler<AsyncResult<Lease<C>>> handler;
   PoolWaiter<C> prev;
   PoolWaiter<C> next;
-  boolean done;
+  boolean disposed;
 
   PoolWaiter(PoolWaiter.Listener<C> listener, EventLoopContext context, final int weight, Handler<AsyncResult<Lease<C>>> handler) {
     this.listener = listener;
@@ -61,6 +61,9 @@ public class PoolWaiter<C> {
     this.handler = handler;
   }
 
+  /**
+   * @return the waiter context
+   */
   public Context context() {
     return context;
   }

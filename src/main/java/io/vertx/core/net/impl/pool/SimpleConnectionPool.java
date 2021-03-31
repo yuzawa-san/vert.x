@@ -28,6 +28,14 @@ import java.util.NoSuchElementException;
 import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
+/**
+ * The connection pool implementation.
+ *
+ * <p> The pool is implemented as a non blocking state machine.
+ *
+ * <p> The pool state is mutated exclusively by {@link Executor.Action} and actions are serialized
+ * by the executor.
+ */
 public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
   private static final Future POOL_CLOSED = Future.failedFuture("Pool closed");
@@ -190,10 +198,10 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       slot.capacity = slot.maxCapacity;
       pool.weight += (result.weight() - initialWeight);
       if (pool.closed) {
-        if (waiter.done) {
+        if (waiter.disposed) {
           waiter = null;
         } else {
-          waiter.done = true;
+          waiter.disposed = true;
         }
         return () -> {
           if (waiter != null) {
@@ -205,11 +213,11 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         int c = 1;
         LeaseImpl<C>[] extra;
         int capacity;
-        if (waiter.done) {
+        if (waiter.disposed) {
           waiter = null;
           capacity = slot.capacity;
         } else {
-          waiter.done = true;
+          waiter.disposed = true;
           capacity = slot.capacity - 1;
         }
         int m = Math.min(capacity, pool.waiters.size());
@@ -251,10 +259,10 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
 
     public Runnable execute(SimpleConnectionPool<C> pool) {
-      if (waiter.done) {
+      if (waiter.disposed) {
         waiter = null;
       } else {
-        waiter.done = true;
+        waiter.disposed = true;
       }
       if (pool.closed) {
         return () -> waiter.handler.handle(POOL_CLOSED);
@@ -481,7 +489,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     private final PoolWaiter<C> waiter;
     private final Handler<AsyncResult<Boolean>> handler;
-    private boolean done;
+    private boolean cancelled;
 
     public Cancel(PoolWaiter<C> waiter, Handler<AsyncResult<Boolean>> handler) {
       this.waiter = waiter;
@@ -494,19 +502,19 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         return () -> handler.handle(POOL_CLOSED);
       }
       if (pool.waiters.remove(waiter)) {
-        done = true;
-      } else if (!waiter.done) {
-        waiter.done = true;
-        done = true;
+        cancelled = true;
+      } else if (!waiter.disposed) {
+        waiter.disposed = true;
+        cancelled = true;
       } else {
-        done = false;
+        cancelled = false;
       }
       return this;
     }
 
     @Override
     public void run() {
-      handler.handle(Future.succeededFuture(done));
+      handler.handle(Future.succeededFuture(cancelled));
     }
   }
 

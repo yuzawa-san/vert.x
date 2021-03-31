@@ -16,7 +16,7 @@ import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
 
 /**
- * Defines the interaction with the actual back-end managing connections.
+ * Defines the interactions with the actual back-end managing connections.
  *
  * @param <C>
  */

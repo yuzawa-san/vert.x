@@ -21,7 +21,7 @@ import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
 /**
- * Connection pool.
+ * A connection pool.
  */
 public interface ConnectionPool<C> {
 
@@ -34,7 +34,13 @@ public interface ConnectionPool<C> {
   }
 
   /**
-   * Set a selector function that decides the best connection to use.
+   * Set a {@code selector} function that decides the best connection to use.
+   *
+   * <p> The selector is called with the waiter and a list of candidate connections,
+   * the selector must return a connection with a positive {@link PoolConnection#capacity()}.
+   *
+   * <p>The selector can return {@code null} if no suitable connection is found. Then the pool will
+   * attempt to create a new connection or chose another available connection.
    *
    * @param selector the selector function
    * @return a reference to this, so the API can be used fluently
@@ -63,15 +69,20 @@ public interface ConnectionPool<C> {
   /**
    * Cancel a waiter.
    *
+   * <p> The completion {@code handler} receives {@code true} when the waiter
+   * has been cancelled successfully (e.g the waiter was in the wait queue or
+   * waiting for a connection), {@code false} when the waiter has been already
+   * notified with a result.
+   *
    * @param waiter the waiter to cancel
    * @param handler the completion handler
    */
   void cancel(PoolWaiter<C> waiter, Handler<AsyncResult<Boolean>> handler);
 
   /**
-   * <p> Evict connections from the pool with a predicate, only unused connection are evicted.
+   * <p> Evict connections from the pool with a {@code predicate}, only unused connection can be evicted.
    *
-   * <p> The operation returns the list of connections that won't be managed anymore by the pool.
+   * <p> The operation returns the list of connections evicted from the pool as is.
    *
    * @param predicate to determine whether a connection should be evicted
    * @param handler the callback handler with the result
@@ -81,24 +92,28 @@ public interface ConnectionPool<C> {
   /**
    * Close the pool.
    *
-   * <p> This will not close the connections, instead a list of connections to be closed is returned.
+   * <p> This will not close the connections, instead a list of connections to be closed is returned
+   * to the completion {@code handler}.
    *
    * @param handler the callback handler with the result
    */
   void close(Handler<AsyncResult<List<Future<C>>>> handler);
 
   /**
-   * @return the number of managed connections
+   * @return the number of managed connections - the program should not use the value
+   *         to take decisions, this can be used for statistic or testing purpose
    */
   int size();
 
   /**
-   * @return the number of waiters
+   * @return the number of waiters - the program should not use the value
+   *         to take decisions, this can be used for statistic or testing purpose
    */
   int waiters();
 
   /**
-   * @return the pool weight
+   * @return the pool weight  - the program should not use the value
+   *         to take decisions, this can be used for statistic or testing purpose
    */
   int weight();
 
