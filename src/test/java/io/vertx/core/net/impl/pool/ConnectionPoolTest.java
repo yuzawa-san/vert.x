@@ -135,6 +135,34 @@ public class ConnectionPoolTest extends VertxTestBase {
   }
 
   @Test
+  public void testIncreaseCapacity() throws Exception {
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    EventLoopContext ctx = vertx.createEventLoopContext();
+    Connection conn1 = new Connection();
+    CountDownLatch l1 = new CountDownLatch(1);
+    pool.acquire(ctx, 1, onSuccess(lease -> {
+      l1.countDown();
+    }));
+    CountDownLatch l2 = new CountDownLatch(1);
+    pool.acquire(ctx, 1, onSuccess(lease -> {
+      l2.countDown();
+    }));
+    CountDownLatch l3 = new CountDownLatch(1);
+    pool.acquire(ctx, 1, onSuccess(lease -> {
+      l3.countDown();
+    }));
+    ConnectionRequest request = mgr.assertRequest();
+    request.connect(conn1, 1);
+    awaitLatch(l1);
+    assertEquals(1, l2.getCount());
+    request.listener.onCapacityChange(2);
+    awaitLatch(l2);
+    request.listener.onCapacityChange(3);
+    awaitLatch(l3);
+  }
+
+  @Test
   public void testSatisfyPendingWaitersWithExtraCapacity() throws Exception {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();

@@ -54,5 +54,12 @@ public interface PoolConnector<C> {
      */
     void onRemove();
 
+    /**
+     * Signals the connection the capacity changed to the {@code capacity} value.
+     *
+     * @param capacity the capacity
+     */
+    void onCapacityChange(long capacity);
+
   }
 }

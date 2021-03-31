@@ -33,6 +33,8 @@ public class ConnectResult<C> {
   }
 
   /**
+   * todo: rename this capacity
+   *
    * @return the connection concurrency, i.e how many times a connection can be borrowed from a pool
    */
   public long concurrency() {

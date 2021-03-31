@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
@@ -79,6 +80,11 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     @Override
     public void onRemove() {
       pool.remove(this);
+    }
+
+    @Override
+    public void onCapacityChange(long capacity) {
+      pool.setCapacity(this, capacity);
     }
 
     @Override
@@ -306,6 +312,52 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         return null;
       }
     }
+  }
+
+  private static class SetCapacity<C> implements Executor.Action<SimpleConnectionPool<C>> {
+
+    private final Slot<C> slot;
+    private final long capacity;
+
+    SetCapacity(Slot<C> slot, long capacity) {
+      this.slot = slot;
+      this.capacity = capacity;
+    }
+
+    @Override
+    public Runnable execute(SimpleConnectionPool<C> pool) {
+      if (slot.connection != null) {
+        if (slot.maxCapacity < capacity) {
+          long diff = capacity - slot.maxCapacity;
+          slot.capacity += diff;
+          slot.maxCapacity += diff;
+          LeaseImpl<C>[] extra;
+          int m = Math.min(slot.capacity, pool.waiters.size());
+          if (m > 0) {
+            extra = new LeaseImpl[m];
+            for (int i = 0;i < m;i++) {
+              extra[i] = new LeaseImpl<>(slot, pool.waiters.poll().handler);
+            }
+            slot.capacity -= m;
+            return () -> {
+              for (LeaseImpl<C> lease : extra) {
+                lease.emit();
+              }
+            };
+          } else {
+            return null;
+          }
+        } else {
+          throw new UnsupportedOperationException("Not yet implemented");
+        }
+      } else {
+        return null;
+      }
+    }
+  }
+
+  private void setCapacity(Slot<C> slot, long capacity) {
+    execute(new SetCapacity<>(slot, capacity));
   }
 
   private void remove(Slot<C> removed) {
