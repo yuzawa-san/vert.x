@@ -547,12 +547,14 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       List<Future<C>> list = new ArrayList<>();
       for (int i = 0;i < pool.size;i++) {
         Slot<C> slot = pool.slots[i];
+        pool.slots[i] = null;
         if (slot.initiator != null) {
           waiters.add(slot.initiator);
           slot.initiator = null;
         }
         list.add(slot.result.future());
       }
+      pool.size = 0;
       return () -> {
         waiters.forEach(w -> w.context.emit(POOL_CLOSED, w.handler));
         handler.handle(Future.succeededFuture(list));

@@ -442,6 +442,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     mgr.assertRequest();
     pool.close(onSuccess(lst -> {
       assertEquals(2, lst.size());
+      assertEquals(0, pool.size());
       complete();
     }));
     await();
