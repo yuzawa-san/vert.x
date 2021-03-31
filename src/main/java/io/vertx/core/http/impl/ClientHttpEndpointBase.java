@@ -21,17 +21,11 @@ import io.vertx.core.spi.metrics.ClientMetrics;
  */
 abstract class ClientHttpEndpointBase<C> extends Endpoint<C> {
 
-  private final Object metric;
-  private final int port;
-  private final String host;
   private final ClientMetrics metrics; // Shall be removed later combining the PoolMetrics with HttpClientMetrics
 
-  ClientHttpEndpointBase(ClientMetrics metrics, int port, String host, Object metric, Runnable dispose) {
+  ClientHttpEndpointBase(ClientMetrics metrics, Runnable dispose) {
     super(dispose);
 
-    this.port = port;
-    this.host = host;
-    this.metric = metric;
     this.metrics = metrics;
   }
 

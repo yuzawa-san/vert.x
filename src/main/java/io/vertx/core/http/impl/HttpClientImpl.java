@@ -133,7 +133,6 @@ public class HttpClientImpl implements HttpClient, MetricsProvider, Closeable {
   private long timerID;
   private volatile Handler<HttpConnection> connectionHandler;
   private volatile Function<HttpClientResponse, Future<RequestOptions>> redirectHandler = DEFAULT_HANDLER;
-  private boolean useSharedPool = Boolean.getBoolean("vertx.useSharedPool");
 
   public HttpClientImpl(VertxInternal vertx, HttpClientOptions options, CloseFuture closeFuture) {
     this.vertx = vertx;
@@ -202,52 +201,25 @@ public class HttpClientImpl implements HttpClient, MetricsProvider, Closeable {
   private ConnectionManager<EndpointKey, Lease<HttpClientConnection>> httpConnectionManager() {
     int maxPoolSize = Math.max(options.getMaxPoolSize(), options.getHttp2MaxPoolSize());
     return new ConnectionManager<>((key, ctx, dispose) -> {
-      String host;
-      int port;
-      if (key.serverAddr.isInetSocket()) {
-        host = key.serverAddr.host();
-        port = key.serverAddr.port();
-      } else {
-        host = key.serverAddr.path();
-        port = 0;
-      }
       ClientMetrics metrics = this.metrics != null ? this.metrics.createEndpointMetrics(key.serverAddr, maxPoolSize) : null;
       HttpChannelConnector connector = new HttpChannelConnector(this, channelGroup, metrics, options.getProtocolVersion(), key.ssl ? sslHelper : null, key.peerAddr, key.serverAddr);
-      if (useSharedPool) {
-        return new SharedClientHttpStreamEndpoint(
-          this,
-          metrics,
-          metrics,
-          options.getMaxWaitQueueSize(),
-          options.getMaxPoolSize(),
-          options.getHttp2MaxPoolSize(),
-          host,
-          port,
-          connector,
-          dispose);
-      } else {
-        long maxSize = options.getMaxPoolSize() * options.getHttp2MaxPoolSize();
-        HttpConnectionProvider provider = new HttpConnectionProvider(this, connector, ctx, options.getProtocolVersion());
-        return new ClientHttpStreamEndpoint(metrics, metrics, options.getMaxWaitQueueSize(), maxSize, host, port, ctx, provider, dispose);
-      }
+      return new SharedClientHttpStreamEndpoint(
+        this,
+        metrics,
+        options.getMaxWaitQueueSize(),
+        options.getMaxPoolSize(),
+        options.getHttp2MaxPoolSize(),
+        connector,
+        dispose);
     });
   }
 
   private ConnectionManager<EndpointKey, HttpClientConnection> webSocketConnectionManager() {
     int maxPoolSize = options.getMaxWebSockets();
     return new ConnectionManager<>((key, ctx, dispose) -> {
-      String host;
-      int port;
-      if (key.serverAddr.isInetSocket()) {
-        host = key.serverAddr.host();
-        port = key.serverAddr.port();
-      } else {
-        host = key.serverAddr.path();
-        port = 0;
-      }
       ClientMetrics metrics = this.metrics != null ? this.metrics.createEndpointMetrics(key.serverAddr, maxPoolSize) : null;
       HttpChannelConnector connector = new HttpChannelConnector(this, channelGroup, metrics, HttpVersion.HTTP_1_1, key.ssl ? webSocketSSLHelper : null, key.peerAddr, key.serverAddr);
-      return new WebSocketEndpoint(null, port, host, metrics, maxPoolSize, connector, dispose);
+      return new WebSocketEndpoint(null, maxPoolSize, connector, dispose);
     });
   }
 

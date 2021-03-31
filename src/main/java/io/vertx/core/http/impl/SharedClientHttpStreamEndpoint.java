@@ -39,15 +39,12 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
 
   public SharedClientHttpStreamEndpoint(HttpClientImpl client,
                                         ClientMetrics metrics,
-                                        Object metric,
                                         int queueMaxSize,
                                         int http1MaxSize,
                                         int http2MaxSize,
-                                        String host,
-                                        int port,
                                         HttpChannelConnector connector,
                                         Runnable dispose) {
-    super(metrics, port, host, metric, dispose);
+    super(metrics, dispose);
     this.client = client;
     this.connector = connector;
     this.http1MaxSize = http1MaxSize;

@@ -41,12 +41,6 @@ import java.util.stream.Stream;
 public class Http2Test extends HttpTest {
 
   @Override
-  public void setUp() throws Exception {
-    System.setProperty("vertx.useSharedPool", "true");
-    super.setUp();
-  }
-
-  @Override
   protected HttpServerOptions createBaseServerOptions() {
     return Http2TestBase.createHttp2ServerOptions(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST);
   }
