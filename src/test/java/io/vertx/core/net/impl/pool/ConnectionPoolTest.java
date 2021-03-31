@@ -362,6 +362,28 @@ public class ConnectionPoolTest extends VertxTestBase {
   }
 
   @Test
+  public void testRemoveEvicted() throws Exception {
+    ConnectionManager mgr = new ConnectionManager();
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    // List<Lease<Connection>> leases = new ArrayList<>();
+    EventLoopContext ctx = vertx.createEventLoopContext();
+    CountDownLatch latch1 = new CountDownLatch(1);
+    pool.acquire(ctx, 1, onSuccess(lease -> {
+      lease.recycle();
+      latch1.countDown();
+    }));
+    ConnectionRequest request = mgr.assertRequest();
+    Connection conn = new Connection();
+    request.connect(conn, 1);
+    awaitLatch(latch1);
+    CountDownLatch latch2 = new CountDownLatch(1);
+    pool.evict(c -> c == conn, onSuccess(l -> latch2.countDown()));
+    awaitLatch(latch2);
+    request.listener.onRemove();
+    assertEquals(0, pool.size());
+  }
+
+  @Test
   public void testConnectionInProgressShouldNotBeEvicted() {
     ConnectionManager mgr = new ConnectionManager();
     ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1, 5);
