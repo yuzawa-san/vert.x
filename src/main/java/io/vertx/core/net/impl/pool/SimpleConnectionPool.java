@@ -233,18 +233,18 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
   }
 
-  private static class ConnectFailed<C> extends Remove<C> {
+  private static class ConnectFailed<C> implements Executor.Action<SimpleConnectionPool<C>> {
 
+    private final Slot<C> removed;
     private final Throwable cause;
     private PoolWaiter<C> waiter;
 
     public ConnectFailed(Slot<C> removed, Throwable cause, PoolWaiter<C> waiter) {
-      super(removed);
+      this.removed = removed;
       this.cause = cause;
       this.waiter = waiter;
     }
 
-    @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
       if (waiter.done) {
         waiter = null;
@@ -254,11 +254,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       if (pool.closed) {
         return () -> waiter.handler.handle(POOL_CLOSED);
       }
-      Runnable res = super.execute(pool);
+      pool.remove(removed);
       return () -> {
-        if (res != null) {
-          res.run();
-        }
         if (waiter != null) {
           removed.context.emit(Future.failedFuture(cause), waiter.handler);
         }
