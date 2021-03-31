@@ -274,7 +274,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
-      if (pool.closed) {
+      if (pool.closed || pool.slots[removed.index] != removed) {
         return null;
       }
       int w = removed.weight;
@@ -376,26 +376,19 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       if (pool.closed) {
         return () -> handler.handle(POOL_CLOSED);
       }
-      List<C> lst = new ArrayList<>();
+      List<C> res = new ArrayList<>();
+      List<Slot<C>> removed = new ArrayList<>();
       for (int i = pool.size - 1;i >= 0;i--) {
         Slot<C> slot = pool.slots[i];
         if (slot.connection != null && slot.capacity == slot.maxCapacity && predicate.test(slot.connection)) {
-          lst.add(slot.connection);
-          slot.capacity = 0;
-          slot.maxCapacity = 0;
-          slot.connection = null;
-          if (i == pool.size - 1) {
-            pool.slots[i] = null;
-          } else {
-            Slot<C> last = pool.slots[pool.size - 1];
-            last.index = i;
-            pool.slots[i] = last;
-          }
-          pool.weight -= slot.weight;
-          pool.size--;
+          removed.add(slot);
+          res.add(slot.connection);
         }
       }
-      return () -> handler.handle(Future.succeededFuture(lst));
+      for (Slot<C> slot : removed) {
+        pool.remove(slot);
+      }
+      return () -> handler.handle(Future.succeededFuture(res));
     }
   }
 
