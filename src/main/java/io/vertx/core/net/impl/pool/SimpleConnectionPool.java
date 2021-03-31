@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
@@ -33,7 +32,10 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
   private static final Future POOL_CLOSED = Future.failedFuture("Pool closed");
 
-  private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> strategy1 = (waiter, list) -> {
+  /**
+   * Select the first available available connection with the same context.
+   */
+  private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> SAME_CONTEXT_SELECTOR = (waiter, list) -> {
     int size = list.size();
     for (int i = 0;i < size;i++) {
       PoolConnection slot = list.get(i);
@@ -44,7 +46,10 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     return null;
   };
 
-  private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> strategy2 = (waiter, list) -> {
+  /**
+   * Select the first available available connection.
+   */
+  private static final BiFunction<PoolWaiter, List<PoolConnection>, PoolConnection> FIRST_AVAILABLE_SELECTOR = (waiter, list) -> {
     int size = list.size();
     for (int i = 0;i < size;i++) {
       PoolConnection slot = list.get(i);
@@ -119,8 +124,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   private final Executor<SimpleConnectionPool<C>> sync;
   private final Waiters<C> waiters = new Waiters<>();
   private final ListImpl list = new ListImpl();
-  private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> DEFAULT_SELECTOR;
-  private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> FIRST_AVAILABLE_SELECTOR;
+  private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> selector;
+  private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> fallbackSelector;
 
   SimpleConnectionPool(PoolConnector<C> connector, int maxSize, int maxWeight) {
     this(connector, maxSize, maxWeight, -1);
@@ -134,13 +139,13 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     this.weight = 0;
     this.maxWeight = maxWeight;
     this.sync = new CombinerExecutor2<>(this);
-    this.DEFAULT_SELECTOR = (BiFunction) strategy1;
-    this.FIRST_AVAILABLE_SELECTOR = (BiFunction) strategy2;
+    this.selector = (BiFunction) SAME_CONTEXT_SELECTOR;
+    this.fallbackSelector = (BiFunction) FIRST_AVAILABLE_SELECTOR;
   }
 
   @Override
   public ConnectionPool<C> connectionSelector(BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> selector) {
-    this.DEFAULT_SELECTOR = selector;
+    this.selector = selector;
     return this;
   }
 
@@ -410,7 +415,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       }
 
       // 1. Try reuse a existing connection with the same context
-      Slot<C> slot1 = (Slot<C>) pool.DEFAULT_SELECTOR.apply(this, pool.list);
+      Slot<C> slot1 = (Slot<C>) pool.selector.apply(this, pool.list);
       if (slot1 != null) {
         slot1.capacity--;
         return () -> {
@@ -436,7 +441,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       }
 
       // 3. Try use another context
-      Slot<C> slot3 = (Slot<C>) pool.FIRST_AVAILABLE_SELECTOR.apply(this, pool.list);
+      Slot<C> slot3 = (Slot<C>) pool.fallbackSelector.apply(this, pool.list);
       if (slot3 != null) {
         slot3.capacity--;
         return () -> {
