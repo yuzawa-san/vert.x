@@ -18,6 +18,8 @@ import io.vertx.core.Promise;
 import io.vertx.core.http.ConnectionPoolTooBusyException;
 import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
+import io.vertx.core.net.impl.clientconnection.ConnectionListener;
+import io.vertx.core.net.impl.clientconnection.ConnectionProvider;
 import io.vertx.core.net.impl.clientconnection.Lease;
 
 import java.util.AbstractList;
@@ -29,12 +31,54 @@ import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
 /**
- * The connection pool implementation.
+ * <p> The pool is a state machine that maintains a queue of waiters and a list of connections.
+ *
+ * <h3>Pool state</h3>
+ *
+ * <p> Interactions with the pool modifies the pool state and then the pool executes actions to make progress satisfying
+ * the pool requests.
  *
  * <p> The pool is implemented as a non blocking state machine.
  *
- * <p> The pool state is mutated exclusively by {@link Executor.Action} and actions are serialized
+ * <p> Calls to the pool are serialized to avoid race conditions and maintain its invariants. This pool can
+ * be called from different threads safely. The pool state is mutated exclusively by {@link Executor.Action} and actions are serialized
  * by the executor.
+ *
+ * <h3>Pool weight</h3>
+ *
+ * To constrain the number of connections the pool maintains a {@link #weight} field that must remain lesser than
+ * {@link #maxWeight} to create a connection. Such weight is used instead of counting connection because the pool
+ * can mix connections with different concurrency (HTTP/1 and HTTP/2) and this flexibility is necessary.
+ *
+ * <h3>Pool connector</h3>
+ *
+ * The pool interacts with connections with the {@link PoolConnector}. The {@link PoolConnector.Listener}
+ * let the connector interact with pool:
+ * <ul>
+ *   <li>The connector can remove connections from the pool using {@link PoolConnector.Listener#onRemove()}.</li>
+ *   <li>The connector can signal the change of the connection capacity using {@link PoolConnector.Listener#onCapacityChange(long)}.</li>
+ * </ul>
+ *
+ * <h3>Connection eviction</h3>
+ *
+ * Connections can be evicted from the pool with {@link ConnectionPool#evict(Predicate, Handler)}. It
+ * can be used to implement keep alive timeout.
+ *
+ * <h3>Waiter lifecycle</h3>
+ *
+ * Connection requests are done with {@link ConnectionPool#acquire(EventLoopContext, int, Handler)}. Such request
+ * creates a {@link PoolWaiter}. When such request is made
+ *
+ * <ul>
+ *   <li>the waiter can be handed back a connection when one is immediately available</li>
+ *   <li>a connection can be created and then handed back to the waiter that initiated the action</li>
+ *   <li>the waiter can be enqueued when the pool is full and the wait queue is not full</li>
+ *   <li>the waiter can be failed</li>
+ * </ul>
+ *
+ * A connection acquisition a {@link PoolWaiter.Listener} can be provided, letting the requester
+ * to get a reference on the waiter and later use {@link #cancel(PoolWaiter, Handler)} to cancel
+ * a request.
  */
 public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
@@ -68,17 +112,20 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     return null;
   };
 
+  /**
+   * A slot for a connection.
+   */
   static class Slot<C> implements PoolConnector.Listener, PoolConnection<C> {
 
     private final SimpleConnectionPool<C> pool;
     private final EventLoopContext context;
     private final Promise<C> result;
     private PoolWaiter<C> initiator;
-    private C connection;
-    private int index;
-    private int capacity;
-    private int maxCapacity;
-    private int weight;
+    private C connection;    // The actual connection, might be null
+    private int index;       // The index in the pool slots array
+    private int capacity;    // The current capacity, i.e the number of acquisitions this connection supports
+    private int maxCapacity; // The connection maximum capacity
+    private int weight;      // The connection weight
 
     public Slot(SimpleConnectionPool<C> pool, EventLoopContext context, int index, int initialWeight) {
       this.pool = pool;
@@ -122,18 +169,25 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   }
 
   private final PoolConnector<C> connector;
-
-  private final Slot<C>[] slots;
-  private int size;
   private final int maxWaiters;
   private final int maxWeight;
-  private int weight;
-  private boolean closed;
   private final Executor<SimpleConnectionPool<C>> sync;
-  private final Waiters<C> waiters = new Waiters<>();
   private final ListImpl list = new ListImpl();
+
+  // Whether the pool is closed
+  private boolean closed;
+
+  // Selectors
   private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> selector;
   private BiFunction<PoolWaiter<C>, List<PoolConnection<C>>, PoolConnection<C>> fallbackSelector;
+
+  // Connection state
+  private final Slot<C>[] slots;    // The pool connections, this array is not sparse
+  private int size;                 // The number of non null slots
+  private int weight;               // The pool total weight
+
+  // The queue of waiters
+  private final Waiters<C> waiters;
 
   SimpleConnectionPool(PoolConnector<C> connector, int maxSize, int maxWeight) {
     this(connector, maxSize, maxWeight, -1);
@@ -149,6 +203,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     this.sync = new CombinerExecutor2<>(this);
     this.selector = (BiFunction) SAME_CONTEXT_SELECTOR;
     this.fallbackSelector = (BiFunction) FIRST_AVAILABLE_SELECTOR;
+    this.waiters = new Waiters<>();
   }
 
   @Override
