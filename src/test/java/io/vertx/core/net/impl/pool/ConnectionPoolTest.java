@@ -156,9 +156,9 @@ public class ConnectionPoolTest extends VertxTestBase {
     request.connect(conn1, 0);
     awaitLatch(l1);
     assertEquals(1, l2.getCount());
-    request.listener.onCapacityChange(2);
+    request.listener.onConcurrencyChange(2);
     awaitLatch(l2);
-    request.listener.onCapacityChange(3);
+    request.listener.onConcurrencyChange(3);
     awaitLatch(l3);
   }
 
@@ -221,7 +221,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     latch.get(10, TimeUnit.SECONDS);
     request.listener.onRemove();
     assertEquals(0, pool.size());
-    assertEquals(0, pool.weight());
+    assertEquals(0, pool.capacity());
   }
 
   @Test
@@ -242,7 +242,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     latch1.get(10, TimeUnit.SECONDS);
     request1.listener.onRemove();
     assertEquals(1, pool.size());
-    assertEquals(1, pool.weight());
+    assertEquals(1, pool.capacity());
   }
 
   @Test
@@ -292,10 +292,10 @@ public class ConnectionPoolTest extends VertxTestBase {
       testComplete();
     }));
     ConnectionRequest request1 = mgr.assertRequest();
-    assertEquals(2, pool.weight());
+    assertEquals(2, pool.capacity());
     request1.fail(failure);
     awaitLatch(latch);
-    assertEquals(1, pool.weight());
+    assertEquals(1, pool.capacity());
     ConnectionRequest request2 = mgr.assertRequest();
     request2.connect(expected, 0);
     await();
@@ -349,7 +349,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     CompletableFuture<List<Integer>> cf = new CompletableFuture<>();
     pool.evict(c -> true, ar -> {
       if (ar.succeeded()) {
-        // assertEquals(num - recycled.length, pool.weight());
+        // assertEquals(num - recycled.length, pool.capacity());
         List<Integer> res = new ArrayList<>();
         List<Connection> all = leases.stream().map(Lease::get).collect(Collectors.toList());
         ar.result().forEach(c -> res.add(all.indexOf(c)));
@@ -465,7 +465,7 @@ public class ConnectionPoolTest extends VertxTestBase {
       mgr.assertRequest().connect(conn, 0);
     }
     awaitLatch(latch);
-    assertEquals(10, pool.weight());
+    assertEquals(10, pool.capacity());
     pool.acquire(ctx, 1, onSuccess(lease -> {
 
     }));
@@ -668,8 +668,8 @@ public class ConnectionPoolTest extends VertxTestBase {
     pool.connectionSelector((waiter, list) -> {
       assertEquals(1, list.size());
       PoolConnection<Connection> pooled = list.get(0);
-      assertEquals(1, pooled.capacity());
-      assertEquals(1, pooled.maxCapacity());
+      assertEquals(1, pooled.concurrency());
+      assertEquals(1, pooled.maxConcurrency());
       assertSame(conn1, pooled.get());
       assertSame(context, pooled.context());
       assertSame(context, waiter.context());
@@ -700,8 +700,8 @@ public class ConnectionPoolTest extends VertxTestBase {
       this.listener = listener;
       this.handler = handler;
     }
-    void connect(Connection connection, int weight) {
-      handler.handle(Future.succeededFuture(new ConnectResult<>(connection, connection.capacity, weight)));
+    void connect(Connection connection, int type) {
+      handler.handle(Future.succeededFuture(new ConnectResult<>(connection, connection.capacity, type)));
     }
 
     public void fail(Throwable cause) {

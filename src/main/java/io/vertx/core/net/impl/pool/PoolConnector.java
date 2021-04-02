@@ -55,11 +55,11 @@ public interface PoolConnector<C> {
     void onRemove();
 
     /**
-     * Signals the connection the capacity changed to the {@code capacity} value.
+     * Signals the connection the concurrency changed to the {@code concurrency} value.
      *
-     * @param capacity the capacity
+     * @param concurrency the concurrency
      */
-    void onCapacityChange(long capacity);
+    void onConcurrencyChange(long concurrency);
 
   }
 }

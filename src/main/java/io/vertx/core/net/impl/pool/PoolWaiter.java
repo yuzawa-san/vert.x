@@ -48,16 +48,16 @@ public class PoolWaiter<C> {
 
   final PoolWaiter.Listener<C> listener;
   final EventLoopContext context;
-  final int weight;
+  final int capacity;
   final Handler<AsyncResult<Lease<C>>> handler;
   PoolWaiter<C> prev;
   PoolWaiter<C> next;
   boolean disposed;
 
-  PoolWaiter(PoolWaiter.Listener<C> listener, EventLoopContext context, final int weight, Handler<AsyncResult<Lease<C>>> handler) {
+  PoolWaiter(PoolWaiter.Listener<C> listener, EventLoopContext context, final int capacity, Handler<AsyncResult<Lease<C>>> handler) {
     this.listener = listener;
     this.context = context;
-    this.weight = weight;
+    this.capacity = capacity;
     this.handler = handler;
   }
 

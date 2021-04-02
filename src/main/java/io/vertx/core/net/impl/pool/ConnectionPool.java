@@ -37,7 +37,7 @@ public interface ConnectionPool<C> {
    * Set a {@code selector} function that decides the best connection to use.
    *
    * <p> The selector is called with the waiter and a list of candidate connections,
-   * the selector must return a connection with a positive {@link PoolConnection#capacity()}.
+   * the selector must return a connection with a positive {@link PoolConnection#concurrency()}.
    *
    * <p>The selector can return {@code null} if no suitable connection is found. Then the pool will
    * attempt to create a new connection or chose another available connection.
@@ -51,20 +51,20 @@ public interface ConnectionPool<C> {
    * Acquire a connection from the pool.
    *
    * @param context the context
-   * @param weight the weight
+   * @param kind the connection kind wanted
    * @param handler the callback handler with the result
    */
-  void acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler);
+  void acquire(EventLoopContext context, int kind, Handler<AsyncResult<Lease<C>>> handler);
 
   /**
    * Acquire a connection from the pool.
    *
    * @param context the context
    * @param listener the waiter event listener
-   * @param weight the weight
+   * @param kind the connection kind wanted
    * @param handler the callback handler with the result
    */
-  void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler);
+  void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int kind, Handler<AsyncResult<Lease<C>>> handler);
 
   /**
    * Cancel a waiter.
@@ -112,9 +112,9 @@ public interface ConnectionPool<C> {
   int waiters();
 
   /**
-   * @return the pool weight  - the program should not use the value
+   * @return the pool capacity  - the program should not use the value
    *         to take decisions, this can be used for statistic or testing purpose
    */
-  int weight();
+  int capacity();
 
 }

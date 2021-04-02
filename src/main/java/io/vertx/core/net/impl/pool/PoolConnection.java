@@ -22,8 +22,8 @@ public interface PoolConnection<C> {
 
   C get();
 
-  int capacity();
+  int concurrency();
 
-  int maxCapacity();
+  int maxConcurrency();
 
 }

@@ -64,7 +64,7 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
             decRefCount();
             listener.onRemove();
           });
-          connection.concurrencyChangeHandler(listener::onCapacityChange);
+          connection.concurrencyChangeHandler(listener::onConcurrencyChange);
           long capacity = connection.concurrency();
           Handler<HttpConnection> connectionHandler = client.connectionHandler();
           if (connectionHandler != null) {

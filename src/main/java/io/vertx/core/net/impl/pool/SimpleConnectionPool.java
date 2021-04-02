@@ -42,10 +42,10 @@ import java.util.function.Predicate;
  * be called from different threads safely. The pool state is mutated exclusively by {@link Executor.Action} and actions are serialized
  * by the executor.
  *
- * <h3>Pool weight</h3>
+ * <h3>Pool capacity</h3>
  *
- * To constrain the number of connections the pool maintains a {@link #weight} field that must remain lesser than
- * {@link #maxWeight} to create a connection. Such weight is used instead of counting connection because the pool
+ * To constrain the number of connections the pool maintains a {@link #capacity} field that must remain lesser than
+ * {@link #maxCapacity} to create a connection. Such capacity is used instead of counting connection because the pool
  * can mix connections with different concurrency (HTTP/1 and HTTP/2) and this flexibility is necessary.
  *
  * <h3>Pool connector</h3>
@@ -54,7 +54,7 @@ import java.util.function.Predicate;
  * let the connector interact with pool:
  * <ul>
  *   <li>The connector can remove connections from the pool using {@link PoolConnector.Listener#onRemove()}.</li>
- *   <li>The connector can signal the change of the connection capacity using {@link PoolConnector.Listener#onCapacityChange(long)}.</li>
+ *   <li>The connector can signal the change of the connection capacity using {@link PoolConnector.Listener#onConcurrencyChange(long)}.</li>
  * </ul>
  *
  * <h3>Connection eviction</h3>
@@ -89,7 +89,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     int size = list.size();
     for (int i = 0;i < size;i++) {
       PoolConnection slot = list.get(i);
-      if (slot.context() == waiter.context() && slot.capacity() > 0) {
+      if (slot.context() == waiter.context() && slot.concurrency() > 0) {
         return slot;
       }
     }
@@ -103,7 +103,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     int size = list.size();
     for (int i = 0;i < size;i++) {
       PoolConnection slot = list.get(i);
-      if (slot.capacity() > 0) {
+      if (slot.concurrency() > 0) {
         return slot;
       }
     }
@@ -121,17 +121,17 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     private PoolWaiter<C> initiator;
     private C connection;    // The actual connection, might be null
     private int index;       // The index in the pool slots array
-    private int capacity;    // The current capacity, i.e the number of acquisitions this connection supports
-    private int maxCapacity; // The connection maximum capacity
-    private int weight;      // The connection weight
+    private int concurrency;    // The current concurrency, i.e the number of acquisitions this connection supports
+    private int maxConcurrency; // The connection maximum concurrency
+    private int capacity;      // The connection capacity
 
-    public Slot(SimpleConnectionPool<C> pool, EventLoopContext context, int index, int initialWeight) {
+    public Slot(SimpleConnectionPool<C> pool, EventLoopContext context, int index, int capacity) {
       this.pool = pool;
       this.context = context;
       this.connection = null;
-      this.capacity = 0;
+      this.concurrency = 0;
       this.index = index;
-      this.weight = initialWeight;
+      this.capacity = capacity;
       this.result = context.promise();
     }
 
@@ -141,8 +141,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
 
     @Override
-    public void onCapacityChange(long capacity) {
-      pool.setCapacity(this, capacity);
+    public void onConcurrencyChange(long concurrency) {
+      pool.setConcurrency(this, concurrency);
     }
 
     @Override
@@ -156,20 +156,20 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
 
     @Override
-    public int capacity() {
-      return capacity;
+    public int concurrency() {
+      return concurrency;
     }
 
     @Override
-    public int maxCapacity() {
-      return maxCapacity;
+    public int maxConcurrency() {
+      return maxConcurrency;
     }
   }
 
   private final PoolConnector<C> connector;
   private final int maxWaiters;
-  private final int maxWeight;
-  private final int[] weights;
+  private final int maxCapacity;
+  private final int[] capacityFactors;
   private final Executor<SimpleConnectionPool<C>> sync;
   private final ListImpl list = new ListImpl();
 
@@ -183,7 +183,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   // Connection state
   private final Slot<C>[] slots;    // The pool connections, this array is not sparse
   private int size;                 // The number of non null slots
-  private int weight;               // The pool total weight
+  private int capacity;             // The pool capacity
 
   // The queue of waiters
   private final Waiters<C> waiters;
@@ -194,28 +194,28 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
   SimpleConnectionPool(PoolConnector<C> connector, int[] maxSizes, int maxWaiters) {
 
-    int[] weights = new int[maxSizes.length];
-    int maxWeight = 1;
+    int[] capacities = new int[maxSizes.length];
+    int maxCapacity = 1;
     int numSlots = 0;
     for (int i = 0;i < maxSizes.length;i++) {
       int maxSize = maxSizes[i];
       if (maxSize < 1) {
         throw new IllegalArgumentException();
       }
-      maxWeight *= maxSize;
+      maxCapacity *= maxSize;
       numSlots = Math.max(numSlots, maxSize);
     }
     for (int i = 0;i < maxSizes.length;i++) {
-      weights[i] = maxWeight / maxSizes[i];
+      capacities[i] = maxCapacity / maxSizes[i];
     }
 
-    this.weights = weights;
+    this.capacityFactors = capacities;
     this.connector = connector;
     this.slots = new Slot[numSlots];
     this.size = 0;
     this.maxWaiters = maxWaiters;
-    this.weight = 0;
-    this.maxWeight = maxWeight;
+    this.capacity = 0;
+    this.maxCapacity = maxCapacity;
     this.sync = new CombinerExecutor2<>(this);
     this.selector = (BiFunction) SAME_CONTEXT_SELECTOR;
     this.fallbackSelector = (BiFunction) FIRST_AVAILABLE_SELECTOR;
@@ -263,14 +263,14 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
 
-      int weight = pool.weights[(int)result.weight()];
+      int capacity = pool.capacityFactors[(int)result.weight()];
 
-      int initialWeight = slot.weight;
+      int initialCapacity = slot.capacity;
       slot.connection = result.connection();
-      slot.maxCapacity = (int)result.concurrency();
-      slot.weight = weight;
-      slot.capacity = slot.maxCapacity;
-      pool.weight += (weight - initialWeight);
+      slot.maxConcurrency = (int)result.concurrency();
+      slot.capacity = capacity;
+      slot.concurrency = slot.maxConcurrency;
+      pool.capacity += (capacity - initialCapacity);
       if (pool.closed) {
         if (waiter.disposed) {
           waiter = null;
@@ -286,15 +286,15 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       } else {
         int c = 1;
         LeaseImpl<C>[] extra;
-        int capacity;
+        int concurrency;
         if (waiter.disposed) {
           waiter = null;
-          capacity = slot.capacity;
+          concurrency = slot.concurrency;
         } else {
           waiter.disposed = true;
-          capacity = slot.capacity - 1;
+          concurrency = slot.concurrency - 1;
         }
-        int m = Math.min(capacity, pool.waiters.size());
+        int m = Math.min(concurrency, pool.waiters.size());
         if (m > 0) {
           c += m;
           extra = new LeaseImpl[m];
@@ -304,7 +304,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         } else {
           extra = null;
         }
-        slot.capacity -= c;
+        slot.concurrency -= c;
         return () -> {
           if (waiter != null) {
             new LeaseImpl<>(slot, waiter.handler).emit();
@@ -364,16 +364,16 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       if (pool.closed || pool.slots[removed.index] != removed) {
         return null;
       }
-      int w = removed.weight;
-      removed.capacity = 0;
-      removed.maxCapacity = 0;
+      int w = removed.capacity;
+      removed.concurrency = 0;
+      removed.maxConcurrency = 0;
       removed.connection = null;
-      removed.weight = 0;
+      removed.capacity = 0;
       PoolWaiter<C> waiter = pool.waiters.poll();
       if (waiter != null) {
-        Slot<C> slot = new Slot<>(pool, waiter.context, removed.index, waiter.weight);
-        pool.weight -= w;
-        pool.weight += waiter.weight;
+        Slot<C> slot = new Slot<>(pool, waiter.context, removed.index, waiter.capacity);
+        pool.capacity -= w;
+        pool.capacity += waiter.capacity;
         pool.slots[removed.index] = slot;
         return () -> {
           if (waiter.listener != null) {
@@ -387,42 +387,42 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
         pool.slots[removed.index] = tmp;
         pool.slots[pool.size - 1] = null;
         pool.size--;
-        pool.weight -= w;
+        pool.capacity -= w;
         return null;
       } else {
         pool.slots[0] = null;
         pool.size--;
-        pool.weight -= w;
+        pool.capacity -= w;
         return null;
       }
     }
   }
 
-  private static class SetCapacity<C> implements Executor.Action<SimpleConnectionPool<C>> {
+  private static class SetConcurrency<C> implements Executor.Action<SimpleConnectionPool<C>> {
 
     private final Slot<C> slot;
-    private final long capacity;
+    private final long concurrency;
 
-    SetCapacity(Slot<C> slot, long capacity) {
+    SetConcurrency(Slot<C> slot, long concurrency) {
       this.slot = slot;
-      this.capacity = capacity;
+      this.concurrency = concurrency;
     }
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
       if (slot.connection != null) {
-        if (slot.maxCapacity < capacity) {
-          long diff = capacity - slot.maxCapacity;
-          slot.capacity += diff;
-          slot.maxCapacity += diff;
+        if (slot.maxConcurrency < concurrency) {
+          long diff = concurrency - slot.maxConcurrency;
+          slot.concurrency += diff;
+          slot.maxConcurrency += diff;
           LeaseImpl<C>[] extra;
-          int m = Math.min(slot.capacity, pool.waiters.size());
+          int m = Math.min(slot.concurrency, pool.waiters.size());
           if (m > 0) {
             extra = new LeaseImpl[m];
             for (int i = 0;i < m;i++) {
               extra[i] = new LeaseImpl<>(slot, pool.waiters.poll().handler);
             }
-            slot.capacity -= m;
+            slot.concurrency -= m;
             return () -> {
               for (LeaseImpl<C> lease : extra) {
                 lease.emit();
@@ -440,8 +440,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     }
   }
 
-  private void setCapacity(Slot<C> slot, long capacity) {
-    execute(new SetCapacity<>(slot, capacity));
+  private void setConcurrency(Slot<C> slot, long concurrency) {
+    execute(new SetConcurrency<>(slot, concurrency));
   }
 
   private void remove(Slot<C> removed) {
@@ -467,7 +467,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       List<Slot<C>> removed = new ArrayList<>();
       for (int i = pool.size - 1;i >= 0;i--) {
         Slot<C> slot = pool.slots[i];
-        if (slot.connection != null && slot.capacity == slot.maxCapacity && predicate.test(slot.connection)) {
+        if (slot.connection != null && slot.concurrency == slot.maxConcurrency && predicate.test(slot.connection)) {
           removed.add(slot);
           res.add(slot.connection);
         }
@@ -486,8 +486,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
   private static class Acquire<C> extends PoolWaiter<C> implements Executor.Action<SimpleConnectionPool<C>> {
 
-    public Acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-      super(listener, context, weight, handler);
+    public Acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int capacity, Handler<AsyncResult<Lease<C>>> handler) {
+      super(listener, context, capacity, handler);
     }
 
     @Override
@@ -499,17 +499,17 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       // 1. Try reuse a existing connection with the same context
       Slot<C> slot1 = (Slot<C>) pool.selector.apply(this, pool.list);
       if (slot1 != null) {
-        slot1.capacity--;
+        slot1.concurrency--;
         return () -> {
           new LeaseImpl<>(slot1, handler).emit();
         };
       }
 
       // 2. Try create connection
-      if (pool.weight < pool.maxWeight) {
-        pool.weight += weight;
+      if (pool.capacity < pool.maxCapacity) {
+        pool.capacity += capacity;
         if (pool.size < pool.slots.length) {
-          Slot<C> slot2 = new Slot<>(pool, context, pool.size, weight);
+          Slot<C> slot2 = new Slot<>(pool, context, pool.size, capacity);
           pool.slots[pool.size++] = slot2;
           return () -> {
             if (listener != null) {
@@ -525,7 +525,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
       // 3. Try use another context
       Slot<C> slot3 = (Slot<C>) pool.fallbackSelector.apply(this, pool.list);
       if (slot3 != null) {
-        slot3.capacity--;
+        slot3.concurrency--;
         return () -> {
           new LeaseImpl<>(slot3, handler).emit();
         };
@@ -546,12 +546,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   }
 
   @Override
-  public void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int idx, Handler<AsyncResult<Lease<C>>> handler) {
-    execute(new Acquire<>(context, listener, weights[idx], handler));
+  public void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int kind, Handler<AsyncResult<Lease<C>>> handler) {
+    execute(new Acquire<>(context, listener, capacityFactors[kind], handler));
   }
 
-  public void acquire(EventLoopContext context, int idx, Handler<AsyncResult<Lease<C>>> handler) {
-    acquire(context, PoolWaiter.NULL_LISTENER, idx, handler);
+  public void acquire(EventLoopContext context, int kind, Handler<AsyncResult<Lease<C>>> handler) {
+    acquire(context, PoolWaiter.NULL_LISTENER, kind, handler);
   }
 
   @Override
@@ -635,7 +635,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
           PoolWaiter<C> waiter = pool.waiters.poll();
           return () -> new LeaseImpl<>(slot, waiter.handler).emit();
         } else {
-          slot.capacity++;
+          slot.concurrency++;
         }
       }
       return null;
@@ -654,8 +654,8 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
     return waiters.size();
   }
 
-  public int weight() {
-    return weight;
+  public int capacity() {
+    return capacity;
   }
 
   private static class Close<C> implements Executor.Action<SimpleConnectionPool<C>> {
