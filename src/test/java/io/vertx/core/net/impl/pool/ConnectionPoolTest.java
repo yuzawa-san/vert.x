@@ -49,16 +49,16 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testConnect() {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 10, 10);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 10 }, 10);
     Connection expected = new Connection();
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       assertSame(expected, lease.get());
       assertSame(context, Vertx.currentContext());
       testComplete();
     }));
     ConnectionRequest request = mgr.assertRequest();
     assertSame(context, request.context);
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     await();
   }
 
@@ -66,18 +66,18 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testAcquireRecycledConnection() throws Exception {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 10, 10);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 10 });
     Connection expected = new Connection();
     CountDownLatch latch = new CountDownLatch(1);
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       lease.recycle();
       latch.countDown();
     }));
     ConnectionRequest request = mgr.assertRequest();
     assertSame(context, request.context);
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     awaitLatch(latch);
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       assertSame(expected, lease.get());
       assertSame(context, Vertx.currentContext());
       testComplete();
@@ -89,12 +89,12 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testRecycleRemovedConnection() throws Exception {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 10, 10);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 10 }, 10);
     Connection expected1 = new Connection();
     Promise<Lease<Connection>> promise = Promise.promise();
-    pool.acquire(context, 1, promise);
+    pool.acquire(context, 0, promise);
     ConnectionRequest request1 = mgr.assertRequest();
-    request1.connect(expected1, 1);
+    request1.connect(expected1, 0);
     CountDownLatch latch = new CountDownLatch(1);
     promise.future().onComplete(onSuccess(lease -> {
       request1.listener.onRemove();
@@ -103,13 +103,13 @@ public class ConnectionPoolTest extends VertxTestBase {
     }));
     awaitLatch(latch);
     Connection expected2 = new Connection();
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       assertSame(expected2, lease.get());
       assertSame(context, Vertx.currentContext());
       testComplete();
     }));
     ConnectionRequest request2 = mgr.assertRequest();
-    request2.connect(expected2, 1);
+    request2.connect(expected2, 0);
     await();
   }
 
@@ -117,17 +117,17 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testCapacity() throws Exception {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 10, 10);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 10 }, 10);
     int capacity = 2;
     Connection expected = new Connection(capacity);
     CountDownLatch latch = new CountDownLatch(1);
-    pool.acquire(context, 1, onSuccess(conn -> {
+    pool.acquire(context, 0, onSuccess(conn -> {
       latch.countDown();
     }));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     awaitLatch(latch);
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       assertSame(lease.get(), expected);
       testComplete();
     }));
@@ -137,23 +137,23 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testIncreaseCapacity() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 });
     EventLoopContext ctx = vertx.createEventLoopContext();
     Connection conn1 = new Connection();
     CountDownLatch l1 = new CountDownLatch(1);
-    pool.acquire(ctx, 1, onSuccess(lease -> {
+    pool.acquire(ctx, 0, onSuccess(lease -> {
       l1.countDown();
     }));
     CountDownLatch l2 = new CountDownLatch(1);
-    pool.acquire(ctx, 1, onSuccess(lease -> {
+    pool.acquire(ctx, 0, onSuccess(lease -> {
       l2.countDown();
     }));
     CountDownLatch l3 = new CountDownLatch(1);
-    pool.acquire(ctx, 1, onSuccess(lease -> {
+    pool.acquire(ctx, 0, onSuccess(lease -> {
       l3.countDown();
     }));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(conn1, 1);
+    request.connect(conn1, 0);
     awaitLatch(l1);
     assertEquals(1, l2.getCount());
     request.listener.onCapacityChange(2);
@@ -166,21 +166,21 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testSatisfyPendingWaitersWithExtraCapacity() throws Exception {
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     int capacity = 2;
     Connection expected = new Connection(capacity);
     AtomicInteger seq = new AtomicInteger();
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       assertSame(lease.get(), expected);
       assertEquals(1, seq.incrementAndGet());
     }));
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       assertSame(lease.get(), expected);
       assertEquals(2, seq.incrementAndGet());
       testComplete();
     }));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     await();
   }
 
@@ -188,16 +188,16 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testWaiter() throws Exception {
     EventLoopContext ctx1 = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 });
     Connection expected = new Connection();
     CompletableFuture<Lease<Connection>> latch = new CompletableFuture<>();
-    pool.acquire(ctx1, 1, onSuccess(latch::complete));
+    pool.acquire(ctx1, 0, onSuccess(latch::complete));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     Lease<Connection> lease1 = latch.get(10, TimeUnit.SECONDS);
     AtomicBoolean recycled = new AtomicBoolean();
     EventLoopContext ctx2 = vertx.createEventLoopContext();
-    pool.acquire(ctx2, 1, onSuccess(lease2 -> {
+    pool.acquire(ctx2, 0, onSuccess(lease2 -> {
       assertSame(ctx1, Vertx.currentContext());
       assertTrue(recycled.get());
       testComplete();
@@ -212,12 +212,12 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testRemoveSingleConnection() throws Exception {
     EventLoopContext ctx1 = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     Connection conn = new Connection();
     CompletableFuture<Lease<Connection>> latch = new CompletableFuture<>();
-    pool.acquire(ctx1, 1, onSuccess(latch::complete));
+    pool.acquire(ctx1, 0, onSuccess(latch::complete));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(conn, 1);
+    request.connect(conn, 0);
     latch.get(10, TimeUnit.SECONDS);
     request.listener.onRemove();
     assertEquals(0, pool.size());
@@ -228,17 +228,17 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testRemoveFirstConnection() throws Exception {
     EventLoopContext ctx = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 2 }, 2);
     Connection conn1 = new Connection();
     CompletableFuture<Lease<Connection>> latch1 = new CompletableFuture<>();
-    pool.acquire(ctx, 1, onSuccess(latch1::complete));
+    pool.acquire(ctx, 0, onSuccess(latch1::complete));
     Connection conn2 = new Connection();
     CompletableFuture<Lease<Connection>> latch2 = new CompletableFuture<>();
-    pool.acquire(ctx, 1, onSuccess(latch2::complete));
+    pool.acquire(ctx, 0, onSuccess(latch2::complete));
     ConnectionRequest request1 = mgr.assertRequest();
-    request1.connect(conn1, 1);
+    request1.connect(conn1, 0);
     ConnectionRequest request2 = mgr.assertRequest();
-    request2.connect(conn2, 1);
+    request2.connect(conn2, 0);
     latch1.get(10, TimeUnit.SECONDS);
     request1.listener.onRemove();
     assertEquals(1, pool.size());
@@ -249,18 +249,18 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testRemoveSingleConnectionWithWaiter() throws Exception {
     EventLoopContext ctx1 = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 });
     Connection connection1 = new Connection();
     CompletableFuture<Lease<Connection>> latch = new CompletableFuture<>();
-    pool.acquire(ctx1, 1, onSuccess(latch::complete));
+    pool.acquire(ctx1, 0, onSuccess(latch::complete));
     ConnectionRequest request1 = mgr.assertRequest();
-    request1.connect(connection1, 1);
+    request1.connect(connection1, 0);
     Lease<Connection> lease1 = latch.get(10, TimeUnit.SECONDS);
     assertSame(connection1, lease1.get());
     AtomicBoolean evicted = new AtomicBoolean();
     Connection conn2 = new Connection();
     EventLoopContext ctx2 = vertx.createEventLoopContext();
-    pool.acquire(ctx2, 1, onSuccess(lease2 -> {
+    pool.acquire(ctx2, 0, onSuccess(lease2 -> {
       assertSame(ctx2, Vertx.currentContext());
       assertTrue(evicted.get());
       assertSame(conn2, lease2.get());
@@ -270,19 +270,19 @@ public class ConnectionPoolTest extends VertxTestBase {
     evicted.set(true);
     request1.listener.onRemove();
     ConnectionRequest request2 = mgr.assertRequest();
-    request2.connect(conn2, 1);
+    request2.connect(conn2, 0);
     await();
   }
 
   @Test
   public void testConnectFailureWithPendingWaiter() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1, 2 }, 2);
     Throwable failure = new Throwable();
     Connection expected = new Connection();
     CountDownLatch latch = new CountDownLatch(1);
     EventLoopContext ctx1 = vertx.createEventLoopContext();
-    pool.acquire(ctx1, 2, onFailure(cause -> {
+    pool.acquire(ctx1, 0, onFailure(cause -> {
       assertSame(failure, cause);
       latch.countDown();
     }));
@@ -297,7 +297,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     awaitLatch(latch);
     assertEquals(1, pool.weight());
     ConnectionRequest request2 = mgr.assertRequest();
-    request2.connect(expected, 1);
+    request2.connect(expected, 0);
     await();
   }
 
@@ -329,18 +329,18 @@ public class ConnectionPoolTest extends VertxTestBase {
 
   private List<Integer> testExpire(int num, int max, int... recycled) throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, max, max);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { max }, max);
     CountDownLatch latch = new CountDownLatch(num);
     List<Lease<Connection>> leases = new ArrayList<>();
     EventLoopContext ctx = vertx.createEventLoopContext();
     for (int i = 0;i < num;i++) {
       Connection expected = new Connection();
-      pool.acquire(ctx, 1, onSuccess(lease -> {
+      pool.acquire(ctx, 0, onSuccess(lease -> {
         assertSame(expected, lease.get());
         leases.add(lease);
         latch.countDown();
       }));
-      mgr.assertRequest().connect(expected, 1);
+      mgr.assertRequest().connect(expected, 0);
     }
     awaitLatch(latch);
     for (int i = 0;i < recycled.length;i++) {
@@ -364,17 +364,17 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testRemoveEvicted() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     // List<Lease<Connection>> leases = new ArrayList<>();
     EventLoopContext ctx = vertx.createEventLoopContext();
     CountDownLatch latch1 = new CountDownLatch(1);
-    pool.acquire(ctx, 1, onSuccess(lease -> {
+    pool.acquire(ctx, 0, onSuccess(lease -> {
       lease.recycle();
       latch1.countDown();
     }));
     ConnectionRequest request = mgr.assertRequest();
     Connection conn = new Connection();
-    request.connect(conn, 1);
+    request.connect(conn, 0);
     awaitLatch(latch1);
     CountDownLatch latch2 = new CountDownLatch(1);
     pool.evict(c -> c == conn, onSuccess(l -> latch2.countDown()));
@@ -386,9 +386,9 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testConnectionInProgressShouldNotBeEvicted() {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1, 5);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 5);
     EventLoopContext ctx = vertx.createEventLoopContext();
-    pool.acquire(ctx, 1, ar -> {
+    pool.acquire(ctx, 0, ar -> {
     });
     mgr.assertRequest();
     pool.evict(c -> {
@@ -403,13 +403,13 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testRecycleRemoveConnection() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     Connection expected = new Connection();
     CompletableFuture<Lease<Connection>> latch = new CompletableFuture<>();
     EventLoopContext ctx1 = vertx.createEventLoopContext();
-    pool.acquire(ctx1, 1, onSuccess(latch::complete));
+    pool.acquire(ctx1, 0, onSuccess(latch::complete));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     Lease<Connection> lease = latch.get();
     request.listener.onRemove();
     assertEquals(0, pool.size());
@@ -420,13 +420,13 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testRecycleMultiple() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     Connection expected = new Connection();
     CompletableFuture<Lease<Connection>> latch = new CompletableFuture<>();
     EventLoopContext ctx1 = vertx.createEventLoopContext();
-    pool.acquire(ctx1, 1, onSuccess(latch::complete));
+    pool.acquire(ctx1, 0, onSuccess(latch::complete));
     ConnectionRequest request = mgr.assertRequest();
-    request.connect(expected, 1);
+    request.connect(expected, 0);
     Lease<Connection> lease = latch.get();
     lease.recycle();
     try {
@@ -439,12 +439,12 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testMaxWaiters() {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1, 5);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 5);
     EventLoopContext ctx = vertx.createEventLoopContext();
     for (int i = 0;i < (1 + 5);i++) {
-      pool.acquire(ctx, 1, ar -> fail());
+      pool.acquire(ctx, 0, ar -> fail());
     }
-    pool.acquire(ctx, 1, onFailure(err -> {
+    pool.acquire(ctx, 0, onFailure(err -> {
       assertTrue(err instanceof ConnectionPoolTooBusyException);
       testComplete();
     }));
@@ -452,21 +452,21 @@ public class ConnectionPoolTest extends VertxTestBase {
   }
 
   @Test
-  public void testWeight() throws Exception {
+  public void testHeterogeneousSizes() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 5, 2 * 5);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 5, 2 });
     EventLoopContext ctx = vertx.createEventLoopContext();
     CountDownLatch latch = new CountDownLatch(5);
     for (int i = 0;i < 5;i++) {
-      pool.acquire(ctx, 5, onSuccess(lease -> {
+      pool.acquire(ctx, 0, onSuccess(lease -> {
         latch.countDown();
       }));
       Connection conn = new Connection();
-      mgr.assertRequest().connect(conn, 2);
+      mgr.assertRequest().connect(conn, 0);
     }
     awaitLatch(latch);
     assertEquals(10, pool.weight());
-    pool.acquire(ctx, 5, onSuccess(lease -> {
+    pool.acquire(ctx, 1, onSuccess(lease -> {
 
     }));
     assertEquals(1, pool.waiters());
@@ -475,20 +475,20 @@ public class ConnectionPoolTest extends VertxTestBase {
   @Test
   public void testClose() throws Exception {
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 2 }, 2);
     EventLoopContext ctx = vertx.createEventLoopContext();
     Connection conn1 = new Connection();
-    pool.acquire(ctx, 1, onSuccess(lease -> {
+    pool.acquire(ctx, 0, onSuccess(lease -> {
 
     }));
     waitFor(3);
-    pool.acquire(ctx, 1, onFailure(err -> {
+    pool.acquire(ctx, 0, onFailure(err -> {
       complete();
     }));
-    pool.acquire(ctx, 1, onFailure(err -> {
+    pool.acquire(ctx, 0, onFailure(err -> {
       complete();
     }));
-    mgr.assertRequest().connect(conn1, 1);
+    mgr.assertRequest().connect(conn1, 0);
     mgr.assertRequest();
     pool.close(onSuccess(lst -> {
       assertEquals(2, lst.size());
@@ -502,7 +502,7 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testCloseTwice() throws Exception {
     AtomicBoolean isReentrant = new AtomicBoolean();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 2 }, 2);
     CountDownLatch latch = new CountDownLatch(1);
     pool.close(onSuccess(lst -> {
       AtomicBoolean inCallback = new AtomicBoolean();
@@ -519,7 +519,7 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testUseAfterClose() throws Exception {
     waitFor(3);
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 });
     EventLoopContext ctx = vertx.createEventLoopContext();
     CompletableFuture<PoolWaiter<Connection>> waiterFut = new CompletableFuture<>();
     pool.acquire(ctx, new PoolWaiter.Listener<Connection>() {
@@ -527,7 +527,7 @@ public class ConnectionPoolTest extends VertxTestBase {
       public void onConnect(PoolWaiter<Connection> waiter) {
         waiterFut.complete(waiter);
       }
-    }, 1, ar -> {
+    }, 0, ar -> {
       // Failed
     });
     PoolWaiter<Connection> waiter = waiterFut.get(20, TimeUnit.SECONDS);
@@ -540,13 +540,13 @@ public class ConnectionPoolTest extends VertxTestBase {
     pool.evict(c -> true, onFailure(err -> {
       complete();
     }));
-    pool.acquire(ctx, 1, onFailure(err -> {
+    pool.acquire(ctx, 0, onFailure(err -> {
       complete();
     }));
     pool.cancel(waiter, onFailure(err -> {
       complete();
     }));
-    request.connect(new Connection(), 1);
+    request.connect(new Connection(), 0);
     await();
   }
 
@@ -555,14 +555,17 @@ public class ConnectionPoolTest extends VertxTestBase {
     waitFor(1);
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 0, 0);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 });
     CompletableFuture<PoolWaiter<Connection>> w = new CompletableFuture<>();
+    pool.acquire(context, 0, onSuccess(lease -> {
+
+    }));
     pool.acquire(context, new PoolWaiter.Listener<Connection>() {
       @Override
       public void onEnqueue(PoolWaiter<Connection> waiter) {
         w.complete(waiter);
       }
-    }, 1, ar -> fail());
+    }, 0, ar -> fail());
     w.get(10, TimeUnit.SECONDS);
     pool.cancel(w.get(10, TimeUnit.SECONDS), onSuccess(removed -> {
       assertTrue(removed);
@@ -585,14 +588,14 @@ public class ConnectionPoolTest extends VertxTestBase {
     waitFor(1);
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     CompletableFuture<PoolWaiter<Connection>> w = new CompletableFuture<>();
     pool.acquire(context, new PoolWaiter.Listener<Connection>() {
       @Override
       public void onConnect(PoolWaiter<Connection> waiter) {
         w.complete(waiter);
       }
-    }, 1, ar -> fail());
+    }, 0, ar -> fail());
     w.get(10, TimeUnit.SECONDS);
     ConnectionRequest request = mgr.assertRequest();
     CountDownLatch latch = new CountDownLatch(1);
@@ -602,7 +605,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     }));
     awaitLatch(latch);
     if (success) {
-      request.connect(new Connection(), 1);
+      request.connect(new Connection(), 0);
     } else {
       request.fail(new Throwable());
     }
@@ -622,7 +625,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     waitFor(1);
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 1, 1);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 1 }, 1);
     CompletableFuture<PoolWaiter<Connection>> w = new CompletableFuture<>();
     CountDownLatch latch = new CountDownLatch(1);
     pool.acquire(context, new PoolWaiter.Listener<Connection>() {
@@ -630,13 +633,13 @@ public class ConnectionPoolTest extends VertxTestBase {
       public void onConnect(PoolWaiter<Connection> waiter) {
         w.complete(waiter);
       }
-    }, 1, ar -> {
+    }, 0, ar -> {
       latch.countDown();
     });
     w.get(10, TimeUnit.SECONDS);
     ConnectionRequest request = mgr.assertRequest();
     if (success) {
-      request.connect(new Connection(), 1);
+      request.connect(new Connection(), 0);
     } else {
       request.fail(new Throwable());
     }
@@ -653,14 +656,14 @@ public class ConnectionPoolTest extends VertxTestBase {
     waitFor(1);
     EventLoopContext context = vertx.createEventLoopContext();
     ConnectionManager mgr = new ConnectionManager();
-    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, 2, 2);
+    ConnectionPool<Connection> pool = ConnectionPool.pool(mgr, new int[] { 2 });
     CountDownLatch latch1 = new CountDownLatch(1);
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       lease.recycle();
       latch1.countDown();
     }));
     Connection conn1 = new Connection();
-    mgr.assertRequest().connect(conn1, 1);
+    mgr.assertRequest().connect(conn1, 0);
     awaitLatch(latch1);
     pool.connectionSelector((waiter, list) -> {
       assertEquals(1, list.size());
@@ -672,7 +675,7 @@ public class ConnectionPoolTest extends VertxTestBase {
       assertSame(context, waiter.context());
       return pooled;
     });
-    pool.acquire(context, 1, onSuccess(lease -> {
+    pool.acquire(context, 0, onSuccess(lease -> {
       testComplete();
     }));
     await();

@@ -25,12 +25,12 @@ import java.util.function.Predicate;
  */
 public interface ConnectionPool<C> {
 
-  static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int maxSize, int maxWeight) {
-    return new SimpleConnectionPool<>(connector, maxSize, maxWeight);
+  static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int[] maxSizes) {
+    return new SimpleConnectionPool<>(connector, maxSizes);
   }
 
-  static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int maxSize, int maxWeight, int maxWaiters) {
-    return new SimpleConnectionPool<>(connector, maxSize, maxWeight, maxWaiters);
+  static <C> ConnectionPool<C> pool(PoolConnector<C> connector, int[] maxSizes, int maxWaiters) {
+    return new SimpleConnectionPool<>(connector, maxSizes, maxWaiters);
   }
 
   /**

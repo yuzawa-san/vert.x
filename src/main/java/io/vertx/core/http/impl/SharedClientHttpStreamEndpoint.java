@@ -49,7 +49,7 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
     this.connector = connector;
     this.http1MaxSize = http1MaxSize;
     this.http2MaxSize = http2MaxSize;
-    this.pool = ConnectionPool.pool(this, Math.max(http1MaxSize, http2MaxSize), http1MaxSize * http2MaxSize, queueMaxSize);
+    this.pool = ConnectionPool.pool(this, new int[] { http1MaxSize, http2MaxSize }, queueMaxSize);
   }
 
   @Override
@@ -70,13 +70,13 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
           if (connectionHandler != null) {
             context.emit(connection, connectionHandler);
           }
-          int weight;
+          int idx;
           if (connection instanceof Http1xClientConnection) {
-            weight = http2MaxSize;
+            idx = 0;
           } else {
-            weight = http1MaxSize;
+            idx = 1;
           }
-          handler.handle(Future.succeededFuture(new ConnectResult<>(connection, capacity, weight)));
+          handler.handle(Future.succeededFuture(new ConnectResult<>(connection, capacity, idx)));
         } else {
           handler.handle(Future.failedFuture(ar.cause()));
         }
@@ -100,14 +100,14 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
   private class Request implements PoolWaiter.Listener<HttpClientConnection>, Handler<AsyncResult<Lease<HttpClientConnection>>> {
 
     private final EventLoopContext context;
-    private final int weight;
+    private final HttpVersion protocol;
     private final long timeout;
     private final Handler<AsyncResult<Lease<HttpClientConnection>>> handler;
     private long timerID;
 
-    Request(EventLoopContext context, int weight, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
+    Request(EventLoopContext context, HttpVersion protocol, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
       this.context = context;
-      this.weight = weight;
+      this.protocol = protocol;
       this.timeout = timeout;
       this.handler = handler;
       this.timerID = -1L;
@@ -144,14 +144,13 @@ class SharedClientHttpStreamEndpoint extends ClientHttpEndpointBase<Lease<HttpCl
     }
 
     void acquire() {
-      pool.acquire(context, this, weight, this);
+      pool.acquire(context, this, protocol == HttpVersion.HTTP_2 ? 1 : 0, this);
     }
   }
 
   @Override
   public void requestConnection2(ContextInternal ctx, long timeout, Handler<AsyncResult<Lease<HttpClientConnection>>> handler) {
-    int weight = client.getOptions().getProtocolVersion() == HttpVersion.HTTP_2 ? http1MaxSize : http2MaxSize;
-    Request request = new Request((EventLoopContext) ctx, weight, timeout, handler);
+    Request request = new Request((EventLoopContext) ctx, client.getOptions().getProtocolVersion(), timeout, handler);
     request.acquire();
   }
 }

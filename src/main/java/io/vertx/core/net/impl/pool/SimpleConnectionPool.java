@@ -18,8 +18,6 @@ import io.vertx.core.Promise;
 import io.vertx.core.http.ConnectionPoolTooBusyException;
 import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
-import io.vertx.core.net.impl.clientconnection.ConnectionListener;
-import io.vertx.core.net.impl.clientconnection.ConnectionProvider;
 import io.vertx.core.net.impl.clientconnection.Lease;
 
 import java.util.AbstractList;
@@ -171,6 +169,7 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   private final PoolConnector<C> connector;
   private final int maxWaiters;
   private final int maxWeight;
+  private final int[] weights;
   private final Executor<SimpleConnectionPool<C>> sync;
   private final ListImpl list = new ListImpl();
 
@@ -189,13 +188,30 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   // The queue of waiters
   private final Waiters<C> waiters;
 
-  SimpleConnectionPool(PoolConnector<C> connector, int maxSize, int maxWeight) {
-    this(connector, maxSize, maxWeight, -1);
+  SimpleConnectionPool(PoolConnector<C> connector, int[] maxSizes) {
+    this(connector, maxSizes, -1);
   }
 
-  SimpleConnectionPool(PoolConnector<C> connector, int maxSize, int maxWeight, int maxWaiters) {
+  SimpleConnectionPool(PoolConnector<C> connector, int[] maxSizes, int maxWaiters) {
+
+    int[] weights = new int[maxSizes.length];
+    int maxWeight = 1;
+    int numSlots = 0;
+    for (int i = 0;i < maxSizes.length;i++) {
+      int maxSize = maxSizes[i];
+      if (maxSize < 1) {
+        throw new IllegalArgumentException();
+      }
+      maxWeight *= maxSize;
+      numSlots = Math.max(numSlots, maxSize);
+    }
+    for (int i = 0;i < maxSizes.length;i++) {
+      weights[i] = maxWeight / maxSizes[i];
+    }
+
+    this.weights = weights;
     this.connector = connector;
-    this.slots = new Slot[maxSize];
+    this.slots = new Slot[numSlots];
     this.size = 0;
     this.maxWaiters = maxWaiters;
     this.weight = 0;
@@ -246,12 +262,15 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
 
     @Override
     public Runnable execute(SimpleConnectionPool<C> pool) {
+
+      int weight = pool.weights[(int)result.weight()];
+
       int initialWeight = slot.weight;
       slot.connection = result.connection();
       slot.maxCapacity = (int)result.concurrency();
-      slot.weight = (int) result.weight();
+      slot.weight = weight;
       slot.capacity = slot.maxCapacity;
-      pool.weight += (result.weight() - initialWeight);
+      pool.weight += (weight - initialWeight);
       if (pool.closed) {
         if (waiter.disposed) {
           waiter = null;
@@ -527,12 +546,12 @@ public class SimpleConnectionPool<C> implements ConnectionPool<C> {
   }
 
   @Override
-  public void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-    execute(new Acquire<>(context, listener, weight, handler));
+  public void acquire(EventLoopContext context, PoolWaiter.Listener<C> listener, int idx, Handler<AsyncResult<Lease<C>>> handler) {
+    execute(new Acquire<>(context, listener, weights[idx], handler));
   }
 
-  public void acquire(EventLoopContext context, int weight, Handler<AsyncResult<Lease<C>>> handler) {
-    acquire(context, PoolWaiter.NULL_LISTENER, weight, handler);
+  public void acquire(EventLoopContext context, int idx, Handler<AsyncResult<Lease<C>>> handler) {
+    acquire(context, PoolWaiter.NULL_LISTENER, idx, handler);
   }
 
   @Override
