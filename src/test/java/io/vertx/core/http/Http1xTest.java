@@ -15,6 +15,8 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.EventLoop;
 import io.netty.handler.codec.TooLongFrameException;
+import io.netty.handler.codec.http.TooLongHttpHeaderException;
+import io.netty.handler.codec.http.TooLongHttpLineException;
 import io.vertx.core.*;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -3587,7 +3589,7 @@ public class Http1xTest extends HttpTest {
       }
     }, errors -> {
       assertEquals(2, errors.size());
-      assertEquals(TooLongFrameException.class, errors.get(0).getClass());
+      assertEquals(TooLongHttpHeaderException.class, errors.get(0).getClass());
     });
   }
 
@@ -4802,6 +4804,59 @@ public class Http1xTest extends HttpTest {
       }));
       awaitLatch(latch);
       assertTrue(response.toString().startsWith("HTTP/1.1 400 Bad Request\r\n"));
+    } finally {
+      client.close();
+    }
+  }
+
+  @Test
+  public void testTooLongHttpRequestHeaderResponse() throws Exception {
+    server.requestHandler(req -> {
+      fail();
+    });
+    startServer(testAddress);
+    NetClient client = vertx.createNetClient();
+    try {
+      CountDownLatch latch = new CountDownLatch(1);
+      Buffer response = Buffer.buffer();
+      client.connect(testAddress, onSuccess(so -> {
+        so.write("GET /some/path HTTP/1.1\r\n" +
+          "Host: vertx.io\r\n" +
+          "User-Agent: " + TestUtils.randomAlphaString(10000) + "\r\n" +
+          "\r\n");
+        so.handler(response::appendBuffer);
+        so.closeHandler(v -> {
+          latch.countDown();
+        });
+      }));
+      awaitLatch(latch);
+      assertTrue(response.toString().startsWith("HTTP/1.1 431 Request Header Fields Too Large\r\n"));
+    } finally {
+      client.close();
+    }
+  }
+
+  @Test
+  public void testTooLongHttpRequestLineResponse() throws Exception {
+    server.requestHandler(req -> {
+      fail();
+    });
+    startServer(testAddress);
+    NetClient client = vertx.createNetClient();
+    try {
+      CountDownLatch latch = new CountDownLatch(1);
+      Buffer response = Buffer.buffer();
+      client.connect(testAddress, onSuccess(so -> {
+        so.write("GET /some/path?x=" + TestUtils.randomAlphaString(100000) + " HTTP/1.1\r\n" +
+          "Host: vertx.io\r\n" +
+          "\r\n");
+        so.handler(response::appendBuffer);
+        so.closeHandler(v -> {
+          latch.countDown();
+        });
+      }));
+      awaitLatch(latch);
+      assertTrue(response.toString().startsWith("HTTP/1.0 414 Request-URI Too Long\r\n"));
     } finally {
       client.close();
     }

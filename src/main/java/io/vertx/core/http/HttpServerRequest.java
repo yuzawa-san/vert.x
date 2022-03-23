@@ -12,8 +12,10 @@
 package io.vertx.core.http;
 
 import io.netty.handler.codec.DecoderResult;
-import io.netty.handler.codec.TooLongFrameException;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.TooLongHttpContentException;
+import io.netty.handler.codec.http.TooLongHttpHeaderException;
+import io.netty.handler.codec.http.TooLongHttpLineException;
 import io.vertx.codegen.annotations.*;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
@@ -51,10 +53,10 @@ public interface HttpServerRequest extends ReadStream<Buffer> {
    * to determine the status code of the response to be sent.
    *
    * <ul>
-   *   <li>When the cause is an instance of {@code io.netty.handler.codec.TooLongFrameException} and the error message
-   *   starts with <i>An HTTP line is larger than</i> the {@code REQUEST_URI_TOO_LONG} status is sent </li>
-   *   <li>Otherwise when the cause is an instance of {@code io.netty.handler.codec.TooLongFrameException} and the error message
-   *   starts with <i>HTTP header is larger than</i> the {@code REQUEST_HEADER_FIELDS_TOO_LARGE} status is sent</li>
+   *   <li>Otherwise when the cause is an instance of {@code io.netty.handler.codec.http.TooLongHttpLineException}
+   *   the {@code REQUEST_URI_TOO_LONG} status is sent</li>
+   *   <li>Otherwise when the cause is an instance of {@code io.netty.handler.codec.http.TooLongHttpHeaderException}
+   *   the {@code REQUEST_HEADER_FIELDS_TOO_LARGE} status is sent</li>
    *   <li>Otherwise then {@code BAD_REQUEST} status is sent</li>
    * </ul>
    */
@@ -62,16 +64,12 @@ public interface HttpServerRequest extends ReadStream<Buffer> {
   Handler<HttpServerRequest> DEFAULT_INVALID_REQUEST_HANDLER = request -> {
     DecoderResult result = request.decoderResult();
     Throwable cause = result.cause();
-    HttpResponseStatus status = null;
-    if (cause instanceof TooLongFrameException) {
-      String causeMsg = cause.getMessage();
-      if (causeMsg.startsWith("An HTTP line is larger than")) {
-        status = HttpResponseStatus.REQUEST_URI_TOO_LONG;
-      } else if (causeMsg.startsWith("HTTP header is larger than")) {
-        status = HttpResponseStatus.REQUEST_HEADER_FIELDS_TOO_LARGE;
-      }
-    }
-    if (status == null) {
+    HttpResponseStatus status;
+    if (cause instanceof TooLongHttpLineException) {
+      status = HttpResponseStatus.REQUEST_URI_TOO_LONG;
+    } else if (cause instanceof TooLongHttpHeaderException) {
+      status = HttpResponseStatus.REQUEST_HEADER_FIELDS_TOO_LARGE;
+    } else {
       status = HttpResponseStatus.BAD_REQUEST;
     }
     HttpServerResponse response = request.response();
